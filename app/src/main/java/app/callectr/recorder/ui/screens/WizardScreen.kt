@@ -190,6 +190,15 @@ fun WizardScreen(
     val audioBitRate = remember(updateTrigger) { viewModel.preferences.getAudioBitRate() }
     val fileNameTemplate = remember(updateTrigger) { viewModel.preferences.getFileNameTemplate() }
 
+    val recordingFolderPersisted = remember(updateTrigger, recordingFolderUri) {
+        recordingFolderUri != null && context.contentResolver.persistedUriPermissions.any {
+            it.uri == recordingFolderUri && it.isWritePermission
+        }
+    }
+    val recordingFolderWritable = remember(updateTrigger, recordingFolderUri) {
+        SafHelper.isFolderValid(context, recordingFolderUri)
+    }
+
     val usesDrive = storageTarget == StorageTarget.DRIVE || storageTarget == StorageTarget.BOTH
 
     // Fixed for the run of the wizard: the mode is chosen during onboarding, before this screen opens.
@@ -253,6 +262,9 @@ fun WizardScreen(
                     WizardStep.STORAGE -> StorageStep(
                         storageTarget = storageTarget,
                         recordingFolderLabel = recordingFolderLabel,
+                        recordingFolderSelected = recordingFolderUri != null,
+                        recordingFolderPersisted = recordingFolderPersisted,
+                        recordingFolderWritable = recordingFolderWritable,
                         driveFolderLabel = driveFolderLabel,
                         usesDrive = usesDrive,
                         onSelectStorageTarget = viewModel::setStorageTarget,
@@ -671,6 +683,9 @@ private fun NoteCard(text: String) {
 private fun StorageStep(
     storageTarget: StorageTarget,
     recordingFolderLabel: String?,
+    recordingFolderSelected: Boolean,
+    recordingFolderPersisted: Boolean,
+    recordingFolderWritable: Boolean,
     driveFolderLabel: String?,
     usesDrive: Boolean,
     onSelectStorageTarget: (StorageTarget) -> Unit,
@@ -700,6 +715,12 @@ private fun StorageStep(
             onClick = onPickRecordingFolder
         )
 
+        StorageStatusCard(
+            selected = recordingFolderSelected,
+            persisted = recordingFolderPersisted,
+            writable = recordingFolderWritable
+        )
+
         if (recordingFolderLabel == null) {
             WarningCard(stringResource(R.string.wizard_storage_missing_review_note))
         }
@@ -713,6 +734,20 @@ private fun StorageStep(
             )
         }
     }
+}
+
+@Composable
+private fun StorageStatusCard(selected: Boolean, persisted: Boolean, writable: Boolean) {
+    val yes = stringResource(R.string.general_yes)
+    val no = stringResource(R.string.general_no)
+    NoteCard(
+        stringResource(
+            R.string.wizard_storage_diagnostics,
+            if (selected) yes else no,
+            if (persisted) yes else no,
+            if (writable) yes else no
+        )
+    )
 }
 
 @Composable
