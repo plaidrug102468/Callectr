@@ -110,7 +110,7 @@ class PersistentFolderPickerContract : ActivityResultContract<Uri?, PersistableF
                 return null
             }
         val mask = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-        val flags = intent.flags and mask
+        val flags = (intent?.flags ?: 0) and mask
         AppLogger.i(TAG, "Folder picker result uri=$uri grantFlags=$flags")
         return PersistableFolderSelection(uri = uri, grantFlags = flags)
     }
