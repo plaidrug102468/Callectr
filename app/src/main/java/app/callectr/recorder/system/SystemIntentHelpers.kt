@@ -68,41 +68,77 @@ const val PAYPAL_SUPPORT_URL = "https://paypal.me/MadKongo"
  * "persistable" access so the app can still read and write the folder after a reboot -
  * without asking the user again.
  */
-class PersistentFolderPickerContract : ActivityResultContracts.OpenDocumentTree() {
+data class PersistableFolderSelection(
+    val uri: Uri,
+    val grantFlags: Int,
+)
+
+/**
+ * Folder picker that preserves the exact read/write grant flags returned by Android.
+ *
+ * Some Samsung/One UI document providers do not return exactly the same flag combination that the
+ * caller requested. Passing READ|WRITE unconditionally into takePersistableUriPermission() can then
+ * throw SecurityException even though the user just tapped Allow. Capturing the RESULT intent flags
+ * and persisting only what Android actually granted avoids that onboarding loop.
+ */
+class PersistentFolderPickerContract : ActivityResultContract<Uri?, PersistableFolderSelection?>() {
     override fun createIntent(context: Context, input: Uri?): Intent {
-        // The [input] (when non-null) is the slot's currently-saved tree URI, used as the picker's
-        // EXTRA_INITIAL_URI so it opens at that folder. AOSP's documented-correct form for the initial
-        // location is a DOCUMENT uri (or a tree uri WITH a document id), NOT a bare persisted tree uri
-        // (content://…/tree/<id>) — AndroidX passes our input straight into EXTRA_INITIAL_URI unchanged,
-        // so we convert tree -> document here. NOTE: EXTRA_INITIAL_URI is a best-effort HINT; OEM pickers
-        // (e.g. OxygenOS) are permitted to ignore it and reopen at the last-browsed location.
         val initialUri = input?.let { tree ->
             runCatching {
                 DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
             }.getOrNull()
         }
-        return super.createIntent(context, initialUri).apply {
+        return Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+            initialUri?.let { putExtra(DocumentsContract.EXTRA_INITIAL_URI, it) }
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            // Makes the access survive app restarts and reboots.
             addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
             addFlags(Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
         }
     }
+
+    override fun parseResult(resultCode: Int, intent: Intent?): PersistableFolderSelection? {
+        if (resultCode != Activity.RESULT_OK) return null
+        val uri = intent?.data ?: return null
+        val mask = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        val flags = intent.flags and mask
+        return PersistableFolderSelection(uri = uri, grantFlags = flags)
+    }
 }
 
 /**
- * Locks in long-term read and write access to [uri] so it remains valid after a reboot.
- * Call this immediately after the user picks a folder with [PersistentFolderPickerContract].
- *
- * @param uri The folder URI returned by [PersistentFolderPickerContract].
+ * Persist exactly the URI permissions Android granted in the folder-picker result.
+ * Returns false instead of throwing so Samsung/OEM SAF quirks never strand the setup wizard.
  */
-fun Context.takePersistableFolderPermission(uri: Uri) {
-    contentResolver.takePersistableUriPermission(
-        uri,
-        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-    )
+fun Context.takePersistableFolderPermission(selection: PersistableFolderSelection): Boolean {
+    val mask = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+    val flags = selection.grantFlags and mask
+    if (flags == 0) {
+        AppLogger.w(TAG, "Folder picker returned no persistable read/write grant flags for ${selection.uri}")
+        return false
+    }
+    return runCatching {
+        contentResolver.takePersistableUriPermission(selection.uri, flags)
+        true
+    }.onFailure {
+        AppLogger.w(TAG, "Could not persist folder permission for ${selection.uri}: ${it.message}")
+    }.getOrDefault(false)
 }
+
+/**
+ * Backwards-compatible URI overload for older call sites. New folder-picker code should use the
+ * selection overload above so it can honor the exact returned flags.
+ */
+fun Context.takePersistableFolderPermission(uri: Uri): Boolean =
+    runCatching {
+        contentResolver.takePersistableUriPermission(
+            uri,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        )
+        true
+    }.onFailure {
+        AppLogger.w(TAG, "Could not persist folder permission for $uri: ${it.message}")
+    }.getOrDefault(false)
 
 /**
  * Opens the App Info page for this app.
