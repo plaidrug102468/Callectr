@@ -19,6 +19,7 @@
     <!-- Folder picker rows. -->
     <string name="wizard_ui_folder_choose">Choose folder</string>
     <string name="wizard_ui_folder_selected">Selected folder</string>
+    <string name="wizard_storage_missing_review_note">Recording folder is not set. You can continue reviewing setup, but recording will stay unavailable until storage is fixed.</string>
 
     <!-- Schedule mode option cards (title + one-line description). -->
     <string name="wizard_ui_schedule_immediate_desc">Upload each call the moment it finishes.</string>
