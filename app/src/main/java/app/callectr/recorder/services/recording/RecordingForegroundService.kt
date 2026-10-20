@@ -36,6 +36,7 @@ import app.callectr.recorder.data.recordings.RecordingDirection
 import app.callectr.recorder.data.transcripts.SpeakerTurnsRepository
 import app.callectr.recorder.data.recordings.RecordingMetadata
 import app.callectr.recorder.system.storage.SafHelper
+import app.callectr.recorder.system.storage.MediaStoreHelper
 import app.callectr.recorder.system.storage.StorageRouter
 import app.callectr.recorder.utils.AppLogger
 import app.callectr.recorder.utils.PhoneNumberManager
@@ -583,7 +584,11 @@ class RecordingForegroundService : Service() {
                     // renameDocument is supported by ExternalStorageProvider and returns the new URI.
                     var renamedUri: Uri? = null
                     try {
-                        renamedUri = DocumentsContract.renameDocument(applicationContext.contentResolver, uriToRename, newName)
+                        renamedUri = if (MediaStoreHelper.isMediaStoreUri(uriToRename)) {
+                            MediaStoreHelper.rename(applicationContext, uriToRename, newName)
+                        } else {
+                            DocumentsContract.renameDocument(applicationContext.contentResolver, uriToRename, newName)
+                        }
                         if (renamedUri != null) {
                             AppLogger.d(TAG, "Successfully renamed wrongly detected anonymous recording to: $newName")
                         }
@@ -697,13 +702,13 @@ class RecordingForegroundService : Service() {
         knownByteCount: Long? = null,
         direction: RecordingDirection? = null
     ) {
-        val doc = DocumentFile.fromSingleUri(applicationContext, uri) ?: return
-        val name = doc.name ?: return
-        // Prefer the exact captured count when we have it (staged recordings): a cloud destination like
-        // Google Drive reports length 0 right after the write (async upload), which would otherwise make
-        // a genuine recording look empty. Fall back to the document length for direct-to-SAF (local) files.
-        val sizeBytes = knownByteCount ?: doc.length()
-        val lastModified = doc.lastModified()
+        val mediaInfo = MediaStoreHelper.info(applicationContext, uri)
+        val doc = if (MediaStoreHelper.isMediaStoreUri(uri)) null else DocumentFile.fromSingleUri(applicationContext, uri)
+        val name = mediaInfo.displayName ?: doc?.name ?: return
+        // Prefer the exact captured count when we have it. MediaStore exposes the finished file size
+        // directly; legacy SAF providers fall back to DocumentFile.
+        val sizeBytes = knownByteCount ?: mediaInfo.sizeBytes ?: doc?.length() ?: 0L
+        val lastModified = mediaInfo.lastModifiedMillis ?: doc?.lastModified() ?: System.currentTimeMillis()
         // An empty file means capture never actually ran (typically: the daemon died right after
         // startRecording was dispatched — seen when Developer options is off and Wireless debugging
         // teardown kills the daemon). Surface an honest failure instead of cataloging an unplayable
