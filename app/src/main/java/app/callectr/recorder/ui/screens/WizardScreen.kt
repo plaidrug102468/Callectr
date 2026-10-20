@@ -125,22 +125,34 @@ fun WizardScreen(
     val updateTrigger by viewModel.updateTrigger.collectAsState()
 
     // Device/recording folder picker — persists access across reboots.
-    val recordingFolderPicker = rememberLauncherForActivityResult(PersistentFolderPickerContract()) { uri ->
-        if (uri != null) {
+    val recordingFolderPicker = rememberLauncherForActivityResult(PersistentFolderPickerContract()) { selection ->
+        if (selection != null) {
+            val uri = selection.uri
             if (SafHelper.isCloudFolder(uri)) {
                 Toast.makeText(context, context.getString(R.string.folder_cloud_rejected), Toast.LENGTH_LONG).show()
             } else {
-                context.takePersistableFolderPermission(uri)
-                viewModel.setRecordingFolderUri(uri)
+                // Persist only the flags Android actually returned. Samsung/One UI can reject the old
+                // hard-coded READ|WRITE combination and leave the wizard stuck on "Choose folder".
+                val persisted = context.takePersistableFolderPermission(selection)
+                if (persisted || SafHelper.isFolderValid(context, uri)) {
+                    viewModel.setRecordingFolderUri(uri)
+                } else {
+                    Toast.makeText(context, context.getString(R.string.recording_error_folder_missing), Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
 
     // Drive folder picker — same contract.
-    val driveFolderPicker = rememberLauncherForActivityResult(PersistentFolderPickerContract()) { uri ->
-        if (uri != null) {
-            context.takePersistableFolderPermission(uri)
-            viewModel.setDriveFolderUri(uri)
+    val driveFolderPicker = rememberLauncherForActivityResult(PersistentFolderPickerContract()) { selection ->
+        if (selection != null) {
+            val uri = selection.uri
+            val persisted = context.takePersistableFolderPermission(selection)
+            if (persisted || SafHelper.isFolderValid(context, uri)) {
+                viewModel.setDriveFolderUri(uri)
+            } else {
+                Toast.makeText(context, context.getString(R.string.recording_error_folder_missing), Toast.LENGTH_LONG).show()
+            }
         }
     }
 
