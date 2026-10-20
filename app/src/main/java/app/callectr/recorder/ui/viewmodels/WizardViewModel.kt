@@ -193,6 +193,7 @@ class WizardViewModel(application: Application) : AndroidViewModel(application) 
         preferences.setCarrierRecordingEnabled(true)
         preferences.setAutoRecordIncomingEnabled(false)
         preferences.setAutoRecordOutgoingEnabled(false)
+        preferences.setRecordFromAnswerEnabled(true)
         preferences.setVoipRecordingEnabled(true)
         preferences.setVoipAutoStartEnabled(false)
 
