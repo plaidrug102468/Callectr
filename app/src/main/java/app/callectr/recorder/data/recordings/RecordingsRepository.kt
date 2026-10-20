@@ -20,6 +20,7 @@ import app.callectr.recorder.data.recordings.db.RecordingEntry
 import app.callectr.recorder.system.interop.MetadataSidecar
 import app.callectr.recorder.system.interop.TranscriptSidecar
 import app.callectr.recorder.system.permissions.PermissionChecks
+import app.callectr.recorder.system.storage.MediaStoreHelper
 import app.callectr.recorder.utils.AppLogger
 import app.callectr.recorder.utils.VoicemailLabel
 import app.callectr.recorder.transcription.AudioDecoder
@@ -297,9 +298,22 @@ object RecordingsRepository {
         val driveFolder = prefs.getDriveFolderUri()
         val byName = LinkedHashMap<String, RecordingEntry>()
 
-        // The device folder is walked for EVERY storage target now; what is taken from it is what
-        // depends on the target. See [seedsFromDevice].
-        if (deviceFolder != null) {
+        // Automatic local storage is MediaStore; a custom folder is the legacy/advanced SAF path.
+        // Either one can rebuild the catalog after app-data loss without forcing a picker back into setup.
+        if (deviceFolder == null) {
+            for (item in MediaStoreHelper.listLocalRecordings(context)) {
+                if (!seedsFromDevice(target, item.displayName)) continue
+                byName.putIfAbsent(
+                    item.displayName,
+                    RecordingEntry(
+                        displayName = item.displayName,
+                        localUri = item.uri.toString(),
+                        localSizeBytes = item.sizeBytes.takeIf { it > 0L },
+                        lastModified = item.lastModifiedMillis
+                    )
+                )
+            }
+        } else {
             for (item in enumerateFolder(context, deviceFolder)) {
                 if (!seedsFromDevice(target, item.displayName)) continue
                 byName.putIfAbsent(
@@ -367,7 +381,12 @@ object RecordingsRepository {
 
         // 1. Delete the exact file this row points at.
         runCatching {
-            if (DocumentFile.fromSingleUri(context, item.uri)?.delete() == true) deletedAny = true
+            val deleted = if (MediaStoreHelper.isMediaStoreUri(item.uri)) {
+                MediaStoreHelper.delete(context, item.uri)
+            } else {
+                DocumentFile.fromSingleUri(context, item.uri)?.delete() == true
+            }
+            if (deleted) deletedAny = true
         }.onFailure { e ->
             AppLogger.w(TAG, "Failed to delete ${item.uri}: ${e.message}")
         }
@@ -417,8 +436,13 @@ object RecordingsRepository {
             // The exact file each row points at — the fast path, and the only one that reaches a copy
             // sitting outside the configured folders.
             for (item in items) {
-                runCatching { DocumentFile.fromSingleUri(context, item.uri)?.delete() }
-                    .onFailure { e -> AppLogger.w(TAG, "Failed to delete ${item.uri}: ${e.message}") }
+                runCatching {
+                    if (MediaStoreHelper.isMediaStoreUri(item.uri)) {
+                        MediaStoreHelper.delete(context, item.uri)
+                    } else {
+                        DocumentFile.fromSingleUri(context, item.uri)?.delete()
+                    }
+                }.onFailure { e -> AppLogger.w(TAG, "Failed to delete ${item.uri}: ${e.message}") }
             }
 
             // One pass over each folder for the WHOLE set, deleting any audio copy whose name is one
@@ -454,7 +478,11 @@ object RecordingsRepository {
      */
     suspend fun deleteFile(context: Context, uri: Uri): Boolean = withContext(Dispatchers.IO) {
         val deleted = runCatching {
-            DocumentFile.fromSingleUri(context, uri)?.delete() == true
+            if (MediaStoreHelper.isMediaStoreUri(uri)) {
+                MediaStoreHelper.delete(context, uri)
+            } else {
+                DocumentFile.fromSingleUri(context, uri)?.delete() == true
+            }
         }.getOrElse { e ->
             AppLogger.w(TAG, "Failed to delete file $uri: ${e.message}")
             false
