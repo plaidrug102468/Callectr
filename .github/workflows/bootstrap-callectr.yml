@@ -1,0 +1,277 @@
+name: Bootstrap and build Callectr
+
+on:
+  push:
+    paths:
+      - ".github/workflows/bootstrap-callectr.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout Callectr repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Install Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager             "platforms;android-36"             "build-tools;36.0.0"             "ndk;27.2.12479018"             "cmake;3.22.1"
+
+      - name: Import upstream CallVault v2.4.6
+        shell: bash
+        run: |
+          rm -rf /tmp/callvault-upstream
+          git clone --branch v2.4.6 --depth 1 https://github.com/madkongo/CallVault.git /tmp/callvault-upstream
+          rsync -a             --exclude=".git"             --exclude=".github"             --exclude="third_party/whisper.cpp"             --exclude="third_party/llama.cpp"             /tmp/callvault-upstream/ ./
+
+          # Recreate upstream submodules as actual gitlinks in the Callectr repo.
+          rm -rf third_party/whisper.cpp third_party/llama.cpp
+          git submodule add -f https://github.com/ggml-org/whisper.cpp.git third_party/whisper.cpp
+          git -C third_party/whisper.cpp checkout "$(git -C /tmp/callvault-upstream rev-parse HEAD:third_party/whisper.cpp)"
+          git submodule add -f https://github.com/ggml-org/llama.cpp.git third_party/llama.cpp
+          git -C third_party/llama.cpp checkout "$(git -C /tmp/callvault-upstream rev-parse HEAD:third_party/llama.cpp)"
+
+      - name: Rebrand source to Callectr
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re, shutil
+
+          root = Path(".")
+          old_pkg = "com.baba.callvault"
+          new_pkg = "app.callectr.recorder"
+
+          # Replace package-dependent identifiers in UTF-8 text files.
+          skip_parts = {".git", ".gradle", "build"}
+          for p in root.rglob("*"):
+              if not p.is_file() or any(part in skip_parts for part in p.parts):
+                  continue
+              try:
+                  text = p.read_text(encoding="utf-8")
+              except Exception:
+                  continue
+              if old_pkg in text:
+                  p.write_text(text.replace(old_pkg, new_pkg), encoding="utf-8")
+
+          # Move package source directories for main/test/androidTest/aidl.
+          candidates = sorted(
+              [p for p in Path("app/src").rglob("callvault")
+               if p.is_dir() and p.parts[-3:] == ("com", "baba", "callvault")],
+              key=lambda p: len(p.parts),
+              reverse=True,
+          )
+          for src in candidates:
+              lang_root = src.parents[2]  # .../java or .../aidl
+              dst = lang_root / "app" / "callectr" / "recorder"
+              dst.parent.mkdir(parents=True, exist_ok=True)
+              if dst.exists():
+                  for child in src.iterdir():
+                      target = dst / child.name
+                      if target.exists() and target.is_dir() and child.is_dir():
+                          for nested in child.iterdir():
+                              shutil.move(str(nested), str(target / nested.name))
+                      else:
+                          shutil.move(str(child), str(target))
+                  shutil.rmtree(src)
+              else:
+                  shutil.move(str(src), str(dst))
+
+          # Root project identity.
+          settings = Path("settings.gradle.kts")
+          s = settings.read_text(encoding="utf-8")
+          s = re.sub(r'rootProject\.name\s*=\s*"CallVault"', 'rootProject.name = "Callectr"', s)
+          settings.write_text(s, encoding="utf-8")
+
+          # Callectr version is independent from upstream.
+          gradle = Path("app/build.gradle.kts")
+          g = gradle.read_text(encoding="utf-8")
+          g = g.replace('.orElse(20461)', '.orElse(1001)')
+          g = g.replace('.orElse("2.4.6")', '.orElse("0.1.0-beta1")')
+          gradle.write_text(g, encoding="utf-8")
+
+          prefs = Path("app/src/main/java/app/callectr/recorder/data/AppPreferences.kt")
+          t = prefs.read_text(encoding="utf-8")
+          t = t.replace('"callvault_prefs"', '"callectr_prefs"')
+          t = t.replace('const val UPDATE_CHECK_ENABLED = true', 'const val UPDATE_CHECK_ENABLED = false')
+          t = t.replace('const val VOIP_RECORDING_ENABLED = false', 'const val VOIP_RECORDING_ENABLED = true')
+          t = t.replace('const val VOIP_AUTO_START = true', 'const val VOIP_AUTO_START = false')
+          t = t.replace('val AUDIO_CODEC = ScrcpyAudioCodec.OPUS.cliKey', 'val AUDIO_CODEC = ScrcpyAudioCodec.AAC.cliKey')
+          t = t.replace('val AUDIO_BITRATE = ScrcpyAudioCodec.OPUS.defaultBitRate', 'val AUDIO_BITRATE = ScrcpyAudioCodec.AAC.defaultBitRate')
+          t = t.replace('fun isAppLockEnabled(): Boolean = getBoolean(Key.APP_LOCK_ENABLED, false)',
+                        'fun isAppLockEnabled(): Boolean = getBoolean(Key.APP_LOCK_ENABLED, true)')
+          prefs.write_text(t, encoding="utf-8")
+
+          # Visible resource strings only: preserve source/header attribution while replacing product name.
+          tag_re = re.compile(r'(<(?:string|item)\b[^>]*>)(.*?)(</(?:string|item)>)', re.S)
+          for p in Path("app/src/main/res").rglob("*.xml"):
+              text = p.read_text(encoding="utf-8")
+              new = tag_re.sub(lambda m: m.group(1) + m.group(2).replace("CallVault", "Callectr") + m.group(3), text)
+              if new != text:
+                  p.write_text(new, encoding="utf-8")
+
+          # Remove self-update install privilege for beta1. Internet stays for embedded ADB/local networking.
+          manifest = Path("app/src/main/AndroidManifest.xml")
+          m = manifest.read_text(encoding="utf-8")
+          m = re.sub(r'\s*<uses-permission android:name="android\.permission\.REQUEST_INSTALL_PACKAGES"\s*/>\s*', '\n', m)
+          manifest.write_text(m, encoding="utf-8")
+
+          # Fresh Callectr icon: not upstream branding.
+          Path("app/src/main/res/drawable/ic_launcher_background.xml").write_text("""<?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp" android:height="108dp"
+              android:viewportWidth="108" android:viewportHeight="108">
+              <path android:fillColor="#111827" android:pathData="M0,0h108v108h-108z"/>
+          </vector>
+          """.strip()+"\n", encoding="utf-8")
+
+          Path("app/src/main/res/drawable/ic_launcher_foreground.xml").write_text("""<?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp" android:height="108dp"
+              android:viewportWidth="108" android:viewportHeight="108">
+              <!-- Callectr: open C-shaped collector ring -->
+              <path
+                  android:fillColor="@android:color/transparent"
+                  android:strokeColor="#FFFFFF"
+                  android:strokeWidth="9"
+                  android:strokeLineCap="round"
+                  android:pathData="M75,34 C68,25 57,21 46,24 C31,28 22,42 24,57 C26,73 39,84 55,84 C64,84 72,80 78,74"/>
+              <!-- collected call dot -->
+              <path android:fillColor="#FFFFFF"
+                  android:pathData="M77,54 m-7,0 a7,7 0,1 0,14 0 a7,7 0,1 0,-14 0"/>
+          </vector>
+          """.strip()+"\n", encoding="utf-8")
+
+          Path("app/src/main/res/drawable/ic_launcher_monochrome.xml").write_text("""<?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp" android:height="108dp"
+              android:viewportWidth="108" android:viewportHeight="108">
+              <path
+                  android:fillColor="@android:color/transparent"
+                  android:strokeColor="#000000"
+                  android:strokeWidth="9"
+                  android:strokeLineCap="round"
+                  android:pathData="M75,34 C68,25 57,21 46,24 C31,28 22,42 24,57 C26,73 39,84 55,84 C64,84 72,80 78,74"/>
+              <path android:fillColor="#000000"
+                  android:pathData="M77,54 m-7,0 a7,7 0,1 0,14 0 a7,7 0,1 0,-14 0"/>
+          </vector>
+          """.strip()+"\n", encoding="utf-8")
+
+          # GPL-compliant fork notice.
+          Path("NOTICE.md").write_text("""# Callectr
+
+          Callectr is a modified independent fork of CallVault:
+          https://github.com/madkongo/CallVault
+
+          CallVault is itself a modified fork of ShizuCallRecorder:
+          https://github.com/kitsumed/ShizuCallRecorder
+
+          Callectr is not endorsed by, affiliated with, or supported by either upstream project.
+          The names, trademarks, and logos of upstream projects remain the property of their respective owners.
+
+          Callectr remains licensed under GNU GPL-3.0-or-later with the applicable Section 7 additional terms contained in LICENSE.
+          This repository provides the corresponding source for Callectr builds.
+
+          Upstream copyright and licence notices in retained source files remain in force.
+
+          Major retained third-party components include scrcpy, Shizuku-derived integration code,
+          libadb-android-derived ADB functionality, whisper.cpp, llama.cpp, AndroidX, and other dependencies
+          identified by the project's dependency metadata and About/Licences screen.
+          """.strip()+"\n", encoding="utf-8")
+
+          Path("README.md").write_text("""# Callectr
+
+          **Collect your calls.**
+
+          Callectr is a Samsung-first Android call recorder built as a GPL-compliant modified fork of
+          [CallVault](https://github.com/madkongo/CallVault), which itself is based on
+          [ShizuCallRecorder](https://github.com/kitsumed/ShizuCallRecorder).
+
+          The first beta focuses on reliable carrier and WhatsApp call capture using the proven
+          embedded-ADB privileged recording architecture, without requiring root.
+
+          ## Beta defaults
+
+          - Package: `app.callectr.recorder`
+          - Carrier recording: manual / Ask each time
+          - WhatsApp recording: enabled, manual / Ask each time
+          - Default codec: AAC in M4A
+          - App lock: enabled where the device has a PIN/password/strong biometric
+          - Upstream CallVault updater: disabled
+          - No analytics or telemetry added
+
+          ## Important
+
+          Modern Android deliberately restricts call-audio capture. Callectr uses elevated local
+          Android shell/ADB capabilities and hidden platform APIs inherited from the upstream projects.
+          Behavior can vary by Android/OEM build and must be verified on real hardware.
+
+          Callectr does not provide a stealth recording mode. Users are responsible for complying with
+          call-recording laws applicable to them.
+
+          ## Licence and attribution
+
+          GPL-3.0-or-later with the applicable additional terms in `LICENSE`. See `NOTICE.md`.
+          """.strip()+"\n", encoding="utf-8")
+
+          # Marker used by humans/CI to identify the imported beta baseline.
+          Path("CALLECTR_BASELINE.txt").write_text(
+              "Callectr 0.1.0-beta1\nUpstream: madkongo/CallVault v2.4.6\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Commit imported Callectr source
+        shell: bash
+        run: |
+          git config user.name "Callectr Build Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "Bootstrap Callectr 0.1.0-beta1 from CallVault v2.4.6"
+          git push origin HEAD:main
+
+      - name: Initialize submodules
+        shell: bash
+        run: |
+          git submodule update --init --recursive
+
+      - name: Build Callectr beta APK
+        shell: bash
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:assembleDebug
+
+      - name: Prepare APK artifact
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk dist/Callectr-v0.1.0-beta1-debug.apk
+          sha256sum dist/Callectr-v0.1.0-beta1-debug.apk | tee dist/Callectr-v0.1.0-beta1-debug.sha256.txt
+
+      - name: Upload Callectr APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Callectr-v0.1.0-beta1-debug
+          path: |
+            dist/Callectr-v0.1.0-beta1-debug.apk
+            dist/Callectr-v0.1.0-beta1-debug.sha256.txt
+          if-no-files-found: error
+          retention-days: 30
