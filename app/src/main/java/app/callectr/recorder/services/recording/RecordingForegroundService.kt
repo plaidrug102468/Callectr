@@ -729,7 +729,11 @@ class RecordingForegroundService : Service() {
                     }
                 notificationHelper.showErrorNotification(getString(emptyFileMessage))
             }
-            SafHelper.deleteDocument(doc, "the empty recording '$name'")
+            if (MediaStoreHelper.isMediaStoreUri(uri)) {
+                MediaStoreHelper.delete(applicationContext, uri)
+            } else {
+                SafHelper.deleteDocument(doc, "the empty recording '$name'")
+            }
             recordHealth(sizeBytes, name)
             return
         }
@@ -747,7 +751,11 @@ class RecordingForegroundService : Service() {
                     TAG,
                     "Discarding '$name': ${durationMs}ms is under the ${minSeconds}s minimum."
                 )
-                SafHelper.deleteDocument(doc, "the too-short recording '$name'")
+                if (MediaStoreHelper.isMediaStoreUri(uri)) {
+                    MediaStoreHelper.delete(applicationContext, uri)
+                } else {
+                    SafHelper.deleteDocument(doc, "the too-short recording '$name'")
+                }
                 // Deliberately no notification. The whole point of the setting is not being told
                 // about a misdial; a user who turned it on has already said they do not want these.
                 // It is logged, so a support question about a missing recording is still answerable.
