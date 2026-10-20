@@ -60,21 +60,21 @@ jobs:
           mkdir -p dist
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -f "$APK"
-          cp "$APK" dist/Callectr-v0.1.0-beta2-debug.apk
+          cp "$APK" dist/Callectr-v0.1.0-beta3-debug.apk
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | tee dist/aapt-badging.txt
           grep -q "package: name='app.callectr.recorder'" dist/aapt-badging.txt
-          grep -q "versionName='0.1.0-beta2'" dist/aapt-badging.txt
+          grep -q "versionName='0.1.0-beta3'" dist/aapt-badging.txt
           grep -q "application-label:'Callectr'" dist/aapt-badging.txt
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" | tee dist/apksigner.txt
-          sha256sum dist/Callectr-v0.1.0-beta2-debug.apk | tee dist/Callectr-v0.1.0-beta2-debug.sha256.txt
+          sha256sum dist/Callectr-v0.1.0-beta3-debug.apk | tee dist/Callectr-v0.1.0-beta3-debug.sha256.txt
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Callectr-v0.1.0-beta2-debug
+          name: Callectr-v0.1.0-beta3-debug
           path: |
-            dist/Callectr-v0.1.0-beta2-debug.apk
-            dist/Callectr-v0.1.0-beta2-debug.sha256.txt
+            dist/Callectr-v0.1.0-beta3-debug.apk
+            dist/Callectr-v0.1.0-beta3-debug.sha256.txt
             dist/aapt-badging.txt
             dist/apksigner.txt
           if-no-files-found: error
@@ -85,8 +85,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v0.1.0-beta2 >/dev/null 2>&1; then
-            gh release upload v0.1.0-beta2               dist/Callectr-v0.1.0-beta2-debug.apk               dist/Callectr-v0.1.0-beta2-debug.sha256.txt               --clobber
+          if gh release view v0.1.0-beta3 >/dev/null 2>&1; then
+            gh release upload v0.1.0-beta3               dist/Callectr-v0.1.0-beta3-debug.apk               dist/Callectr-v0.1.0-beta3-debug.sha256.txt               --clobber
           else
-            gh release create v0.1.0-beta2               dist/Callectr-v0.1.0-beta2-debug.apk               dist/Callectr-v0.1.0-beta2-debug.sha256.txt               --prerelease               --title "Callectr v0.1.0-beta2"               --notes "Fixes Samsung/One UI folder selection by preserving the exact URI permission flags Android returns. This is still a debug-signed physical-device test build."
+            gh release create v0.1.0-beta3               dist/Callectr-v0.1.0-beta3-debug.apk               dist/Callectr-v0.1.0-beta3-debug.sha256.txt               --prerelease               --title "Callectr v0.1.0-beta3"               --notes "Fixes Samsung/One UI folder selection loops by remembering the selected folder immediately and treating persistable grants as best-effort instead of blocking setup. Debug-signed CI artifact; the user-facing APK is re-signed with the permanent Callectr key."
           fi
