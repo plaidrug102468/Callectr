@@ -1020,15 +1020,21 @@ private fun StorageSection(
 
         SettingsDivider()
 
-        NavigationRow(
-            icon = Icons.Filled.Folder,
-            label = stringResource(R.string.settings_recording_folder_label),
-            value = recordingFolderLabel ?: stringResource(R.string.settings_tap_to_select_folder),
-            // Surface a cloud folder (e.g. Google Drive) that was set before we started rejecting them —
-            // otherwise it's indistinguishable from a local folder by name alone.
-            supporting = if (recordingFolderIsCloud) stringResource(R.string.folder_cloud_warning) else null,
-            onClick = onSelectFolder
-        )
+        // Local storage is automatic in the simple Callectr baseline. Do not send fresh installs
+        // back into the OEM document-tree picker that caused the setup loop. A previously configured
+        // custom folder is still shown and can be changed; otherwise the stable MediaStore destination
+        // is simply reported.
+        if (preferences.getRecordingFolderUri() == null) {
+            SettingsHint("Local recordings: Internal storage → Recordings → Callectr (automatic)")
+        } else {
+            NavigationRow(
+                icon = Icons.Filled.Folder,
+                label = stringResource(R.string.settings_recording_folder_label),
+                value = recordingFolderLabel ?: stringResource(R.string.general_not_set),
+                supporting = if (recordingFolderIsCloud) stringResource(R.string.folder_cloud_warning) else "Custom folder",
+                onClick = onSelectFolder
+            )
+        }
 
         NavigationRow(
             icon = Icons.Filled.Cloud,
