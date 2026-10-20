@@ -289,11 +289,10 @@ fun SettingsScreen(
                 // breaks live capture. Refuse it here; the Drive backup option handles cloud copies.
                 Toast.makeText(context, context.getString(R.string.folder_cloud_rejected), Toast.LENGTH_LONG).show()
             } else {
+                viewModel.preferences.setRecordingFolderUri(uri)
                 val persisted = context.takePersistableFolderPermission(selection)
-                if (persisted || SafHelper.isFolderValid(context, uri)) {
-                    viewModel.preferences.setRecordingFolderUri(uri)
-                } else {
-                    Toast.makeText(context, context.getString(R.string.recording_error_folder_missing), Toast.LENGTH_LONG).show()
+                if (!persisted) {
+                    AppLogger.w("CV:Settings", "Folder selected but persistable grant was not confirmed: $uri")
                 }
             }
         }
@@ -304,11 +303,10 @@ fun SettingsScreen(
     val driveFolderPickerLauncher = rememberLauncherForActivityResult(PersistentFolderPickerContract()) { selection ->
         if (selection != null) {
             val uri = selection.uri
+            viewModel.setDriveFolderUri(uri)
             val persisted = context.takePersistableFolderPermission(selection)
-            if (persisted || SafHelper.isFolderValid(context, uri)) {
-                viewModel.setDriveFolderUri(uri)
-            } else {
-                Toast.makeText(context, context.getString(R.string.recording_error_folder_missing), Toast.LENGTH_LONG).show()
+            if (!persisted) {
+                AppLogger.w("CV:Settings", "Drive folder selected but persistable grant was not confirmed: $uri")
             }
         }
         viewModel.refresh()
