@@ -7,6 +7,7 @@ package app.callectr.recorder.system.storage
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import android.os.Environment
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
@@ -23,6 +24,14 @@ import app.callectr.recorder.utils.AppLogger
 object MediaStoreHelper {
     private const val TAG = "CV:MediaStore"
     const val RELATIVE_PATH = "Recordings/Callectr"
+
+    /**
+     * Android 12+ has a first-class Recordings collection. Android 11 (our minSdk 30) does not,
+     * so use Music/Callectr there rather than relying on an OEM accepting an unsupported top-level
+     * folder. The user's current Android 16 device always resolves to Recordings/Callectr.
+     */
+    internal fun relativePathForSdk(sdkInt: Int): String =
+        if (sdkInt >= Build.VERSION_CODES.S) RELATIVE_PATH else "${Environment.DIRECTORY_MUSIC}/Callectr"
 
     data class CreatedAudio(
         val uri: Uri,
@@ -43,11 +52,12 @@ object MediaStoreHelper {
     ): CreatedAudio? {
         val resolver = context.contentResolver
         val collection = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val relativePath = relativePathForSdk(Build.VERSION.SDK_INT)
         val mediaMime = if (fileName.endsWith(".m4a", ignoreCase = true)) "audio/mp4" else mimeType
         val values = ContentValues().apply {
             put(MediaStore.Audio.Media.DISPLAY_NAME, fileName)
             put(MediaStore.Audio.Media.MIME_TYPE, mediaMime)
-            put(MediaStore.Audio.Media.RELATIVE_PATH, RELATIVE_PATH)
+            put(MediaStore.Audio.Media.RELATIVE_PATH, relativePath)
             put(MediaStore.Audio.Media.IS_PENDING, 1)
         }
         val uri = runCatching { resolver.insert(collection, values) }
@@ -63,8 +73,8 @@ object MediaStoreHelper {
             return null
         }
 
-        AppLogger.i(TAG, "Created pending recording $uri → $RELATIVE_PATH/$fileName")
-        return CreatedAudio(uri, pfd, "$RELATIVE_PATH/$fileName")
+        AppLogger.i(TAG, "Created pending recording $uri → $relativePath/$fileName")
+        return CreatedAudio(uri, pfd, "$relativePath/$fileName")
     }
 
     /** Make a finished recording visible to Files/audio-player apps. */
