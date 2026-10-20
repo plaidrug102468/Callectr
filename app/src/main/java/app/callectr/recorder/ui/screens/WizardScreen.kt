@@ -120,7 +120,7 @@ fun WizardScreen(
                 BaselineCard(
                     icon = Icons.Filled.Phone,
                     title = "Phone and app calls",
-                    body = "Carrier and WhatsApp/app-call support are enabled, but recording does not start automatically. Callectr will offer Record after the call is connected.",
+                    body = "Carrier and WhatsApp/app-call support are enabled, but recording does not start automatically. Callectr offers Record while the call is live; if you arm an outgoing call before pickup, the audio file starts when the other person answers.",
                     status = "Manual",
                 )
             }
