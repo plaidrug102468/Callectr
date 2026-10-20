@@ -8,6 +8,8 @@
 
 package app.callectr.recorder.ui.screens
 
+import android.content.Intent
+import android.net.Uri
 import android.provider.Settings
 import android.annotation.SuppressLint
 import android.os.Build
@@ -768,6 +770,7 @@ private fun RecordingSection(
     onOpenContactsIncoming: () -> Unit,
     onOpenContactsOutgoing: () -> Unit
 ) {
+    val context = LocalContext.current
     // Evaluate these here so they are fetched on every recomposition.
     val fileNameFormat = remember(updateTrigger) { preferences.getFileNameTemplate() }
     val carrierRecording = remember(updateTrigger) { preferences.isCarrierRecordingEnabled() }
@@ -814,6 +817,29 @@ private fun RecordingSection(
                 fileNameTemplateExample(fileNameFormat)
             ),
             onClick = { showFileNameFormatDialog = true }
+        )
+      }
+
+      SettingsSubSection(
+        title = "Live Record button",
+        expanded = openSub == "live_record",
+        onToggle = { openSub = if (openSub == "live_record") null else "live_record" },
+      ) {
+        NavigationRow(
+            icon = Icons.Filled.PhoneInTalk,
+            label = "Floating REC over calls",
+            value = if (Settings.canDrawOverlays(context)) "Enabled" else "Optional",
+            supporting = "Shows a small REC button over the live Phone or app-call screen. The notification Record action always remains available.",
+            onClick = {
+                runCatching {
+                    context.startActivity(
+                        Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:${context.packageName}")
+                        )
+                    )
+                }
+            }
         )
       }
 
