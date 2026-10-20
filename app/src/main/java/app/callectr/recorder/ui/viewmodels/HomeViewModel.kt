@@ -33,6 +33,7 @@ import app.callectr.recorder.data.RecordingState
 import app.callectr.recorder.services.recording.DaemonKeepAliveService
 import app.callectr.recorder.services.recording.RecordingSwitch
 import app.callectr.recorder.services.recording.RecordingPolicy
+import app.callectr.recorder.system.storage.MediaStoreHelper
 import app.callectr.recorder.data.health.Prerequisite
 import app.callectr.recorder.data.health.SetupPrerequisites
 import app.callectr.recorder.data.recordings.AudioImport
@@ -533,7 +534,13 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private fun pruneIfMissing(uri: Uri) {
         viewModelScope.launch {
             val missing = withContext(Dispatchers.IO) {
-                runCatching { DocumentFile.fromSingleUri(appContext, uri)?.exists() == false }.getOrDefault(false)
+                runCatching {
+                    if (MediaStoreHelper.isMediaStoreUri(uri)) {
+                        !MediaStoreHelper.exists(appContext, uri)
+                    } else {
+                        DocumentFile.fromSingleUri(appContext, uri)?.exists() == false
+                    }
+                }.getOrDefault(false)
             }
             if (missing) {
                 AppLogger.i("CV:HomeViewModel", "Recording gone (deleted outside the app); pruning stale entry: $uri")
