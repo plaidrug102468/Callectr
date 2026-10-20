@@ -17,7 +17,7 @@ import app.callectr.recorder.data.SyncScheduleMode
 import app.callectr.recorder.system.storage.SyncScheduler
 import app.callectr.recorder.system.updates.UpdateScheduler
 import app.callectr.recorder.integrations.scrcpy.ScrcpyAudioCodec
-import app.callectr.recorder.transcription.TranscriptionMode
+import app.callectr.recorder.data.TranscriptionMode
 import app.callectr.recorder.transcription.model.DownloadableModel
 import app.callectr.recorder.transcription.model.ModelDownloadWorker
 import app.callectr.recorder.transcription.model.ModelRepository
