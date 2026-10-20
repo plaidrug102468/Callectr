@@ -12,6 +12,12 @@ on:
 permissions:
   contents: write
 
+# Callectr development pushes often land minutes apart. Keep only the newest build so GitHub minutes
+# are spent testing the code we will actually install, not obsolete intermediate commits.
+concurrency:
+  group: callectr-beta-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -41,7 +47,6 @@ jobs:
           sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
 
       - name: Run JVM tests
-        continue-on-error: true
         shell: bash
         run: |
           chmod +x gradlew
