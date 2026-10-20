@@ -593,6 +593,10 @@ object VoipRecordingCoordinator {
         isSuspendedForCarrierCall = false
         runCatching { RecorderConnection.service?.stopRecording() }
             .onFailure { AppLogger.w(TAG, "stopRecording failed: ${it.message}") }
+        // The daemon owns a dup of the fd. Once it has finalised its muxer, close our app-side handle
+        // too before inspecting/publishing the file. The old VoIP path leaked this descriptor until GC.
+        runCatching { saf?.descriptor?.close() }
+            .onFailure { AppLogger.w(TAG, "Closing VoIP output fd failed: ${it.message}") }
         // The capture's own account of how its two sides lined up, written to the APP's log — the
         // same route the carrier path uses — so a report carries it even when the host's ring was
         // not on for the whole call. Issue #41 is diagnosed from this line. Empty from an older host.
