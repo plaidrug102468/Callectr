@@ -15,6 +15,9 @@ import app.callectr.recorder.data.AppPreferences
 import app.callectr.recorder.data.StorageTarget
 import app.callectr.recorder.data.SyncScheduleMode
 import app.callectr.recorder.system.storage.SyncScheduler
+import app.callectr.recorder.system.updates.UpdateScheduler
+import app.callectr.recorder.integrations.scrcpy.ScrcpyAudioCodec
+import app.callectr.recorder.transcription.TranscriptionMode
 import app.callectr.recorder.transcription.model.DownloadableModel
 import app.callectr.recorder.transcription.model.ModelDownloadWorker
 import app.callectr.recorder.transcription.model.ModelRepository
@@ -172,6 +175,34 @@ class WizardViewModel(application: Application) : AndroidViewModel(application) 
     fun deleteModel(model: DownloadableModel) {
         ModelDownloadWorker.cancel(appContext, model)
         ModelRepository.delete(appContext, model)
+        bump()
+    }
+
+    /**
+     * Applies the deliberately small Callectr beta baseline.
+     *
+     * The goal is to prove capture first: automatic local storage, manual recording prompts,
+     * AAC/M4A, no Drive/transcription automation/experimental handoff, and no updater activity.
+     * Every advanced control stays available in Settings for later builds.
+     */
+    fun applySimpleBaseline() {
+        preferences.setStorageTarget(StorageTarget.LOCAL)
+        preferences.setRecordingFolderUri(null) // null = automatic MediaStore Recordings/Callectr
+        preferences.setDriveFolderUri(null)
+
+        preferences.setCarrierRecordingEnabled(true)
+        preferences.setAutoRecordIncomingEnabled(false)
+        preferences.setAutoRecordOutgoingEnabled(false)
+        preferences.setVoipRecordingEnabled(true)
+        preferences.setVoipAutoStartEnabled(false)
+
+        preferences.chooseAudioCodec(ScrcpyAudioCodec.AAC.cliKey)
+        preferences.setHandoffPersistEnabled(false)
+        preferences.setUpdateCheckEnabled(false)
+        preferences.setTranscriptionMode(TranscriptionMode.MANUAL)
+
+        SyncScheduler.apply(appContext)
+        UpdateScheduler.apply(appContext)
         bump()
     }
 
