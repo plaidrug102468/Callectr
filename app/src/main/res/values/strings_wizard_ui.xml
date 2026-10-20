@@ -18,6 +18,7 @@
 
     <!-- Folder picker rows. -->
     <string name="wizard_ui_folder_choose">Choose folder</string>
+    <string name="wizard_ui_folder_selected">Selected folder</string>
 
     <!-- Schedule mode option cards (title + one-line description). -->
     <string name="wizard_ui_schedule_immediate_desc">Upload each call the moment it finishes.</string>
