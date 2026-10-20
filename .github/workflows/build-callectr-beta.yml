@@ -1,0 +1,104 @@
+name: Build and publish Callectr beta
+
+on:
+  push:
+    paths:
+      - "app/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle/**"
+      - "ci/**"
+      - ".github/workflows/build-callectr-beta.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Install Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK components
+        shell: bash
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+        run: |
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
+
+      - name: Restore stable beta signing key
+        shell: bash
+        run: |
+          mkdir -p /tmp/callectr-signing
+          base64 -d ci/callectr-beta-signing.keystore.b64 > /tmp/callectr-signing/callectr-beta.jks
+          keytool -list -keystore /tmp/callectr-signing/callectr-beta.jks -storepass callectr-beta-2026 -alias callectr-beta >/dev/null
+
+      - name: Run JVM tests
+        shell: bash
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:testDebugUnitTest
+
+      - name: Build signed beta release APK
+        shell: bash
+        env:
+          KEYSTORE_FILE: /tmp/callectr-signing/callectr-beta.jks
+          KEYSTORE_PASSWORD: callectr-beta-2026
+          KEY_ALIAS: callectr-beta
+          KEY_PASSWORD: callectr-beta-2026
+        run: |
+          ./gradlew --no-daemon :app:assembleRelease
+
+      - name: Verify and prepare artifact
+        shell: bash
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+        run: |
+          mkdir -p dist
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -f "$APK"
+          cp "$APK" dist/Callectr-v0.1.0-beta2.apk
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | tee dist/aapt-badging.txt
+          grep -q "package: name='app.callectr.recorder'" dist/aapt-badging.txt
+          grep -q "versionName='0.1.0-beta2'" dist/aapt-badging.txt
+          grep -q "application-label:'Callectr'" dist/aapt-badging.txt
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" | tee dist/apksigner.txt
+          sha256sum dist/Callectr-v0.1.0-beta2.apk | tee dist/Callectr-v0.1.0-beta2.sha256.txt
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Callectr-v0.1.0-beta2
+          path: |
+            dist/Callectr-v0.1.0-beta2.apk
+            dist/Callectr-v0.1.0-beta2.sha256.txt
+            dist/aapt-badging.txt
+            dist/apksigner.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish beta prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v0.1.0-beta2 >/dev/null 2>&1; then
+            gh release upload v0.1.0-beta2               dist/Callectr-v0.1.0-beta2.apk               dist/Callectr-v0.1.0-beta2.sha256.txt               --clobber
+          else
+            gh release create v0.1.0-beta2               dist/Callectr-v0.1.0-beta2.apk               dist/Callectr-v0.1.0-beta2.sha256.txt               --prerelease               --title "Callectr v0.1.0-beta2"               --notes "Fixes Samsung/One UI folder selection so the setup wizard persists the exact URI permission flags Android grants. This beta also establishes a stable TEST signing certificate for subsequent beta updates. The beta signing key is intentionally public and is not the future production signing identity."
+          fi
