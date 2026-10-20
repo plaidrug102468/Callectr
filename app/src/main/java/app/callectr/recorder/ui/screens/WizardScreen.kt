@@ -4,6 +4,11 @@
  */
 package app.callectr.recorder.ui.screens
 
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -21,9 +26,15 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -51,6 +62,12 @@ fun WizardScreen(
     modifier: Modifier = Modifier,
     viewModel: WizardViewModel = viewModel(),
 ) {
+    val context = LocalContext.current
+    var overlayAllowed by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+    val overlaySettings = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        overlayAllowed = Settings.canDrawOverlays(context)
+    }
+
     CvScaffold(
         title = "Callectr",
         subtitle = "Simple test setup",
@@ -110,6 +127,30 @@ fun WizardScreen(
 
             item {
                 BaselineCard(
+                    icon = Icons.Filled.Phone,
+                    title = "Live Record button",
+                    body = if (overlayAllowed) {
+                        "The floating REC button is enabled. During a live phone or app call it can appear over the call screen, with the notification Record action as a backup."
+                    } else {
+                        "Optional: allow Callectr to appear over other apps for the floating REC button. If you skip this, the live notification still has a Record action."
+                    },
+                    status = if (overlayAllowed) "Enabled" else "Optional",
+                    actionLabel = if (overlayAllowed) null else "Enable floating REC",
+                    onAction = if (overlayAllowed) null else {
+                        {
+                            overlaySettings.launch(
+                                Intent(
+                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    Uri.parse("package:${context.packageName}")
+                                )
+                            )
+                        }
+                    },
+                )
+            }
+
+            item {
+                BaselineCard(
                     icon = Icons.Filled.GraphicEq,
                     title = "Compatible audio",
                     body = "AAC in an M4A container is the default for this test build so the finished file should play in ordinary Android/Samsung audio players.",
@@ -157,6 +198,8 @@ private fun BaselineCard(
     title: String,
     body: String,
     status: String,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null,
 ) {
     CvCard {
         Icon(
@@ -178,5 +221,11 @@ private fun BaselineCard(
         )
         Spacer(Modifier.height(12.dp))
         CvStatusPill(text = status, tone = CvTone.Success)
+        if (actionLabel != null && onAction != null) {
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(onClick = onAction) {
+                Text(actionLabel)
+            }
+        }
     }
 }
