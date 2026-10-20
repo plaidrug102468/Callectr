@@ -613,14 +613,17 @@ object VoipRecordingCoordinator {
         // A capture that never started wrote nothing, and "the far party was not heard" is then trivially
         // true — which used to blame the other app ("it blocks capture") for our own failure to open the
         // microphone (vivo, 2026-09-28). Nothing recorded is reported as that, below; not as one-sided.
-        val wroteAnything = saf?.stagingFile?.let { it.exists() && it.length() > 0L } ?: true
+        val mediaUri = saf?.uri?.takeIf { MediaStoreHelper.isMediaStoreUri(it) }
+        val wroteAnything = when {
+            saf == null -> false
+            mediaUri != null -> (MediaStoreHelper.info(context, mediaUri).sizeBytes ?: 0L) > 0L
+            else -> saf.stagingFile?.let { it.exists() && it.length() > 0L } ?: false
+        }
         if (!wroteAnything) {
             AppLogger.w(TAG, "VoIP capture never started — nothing was recorded (the recorder's reason is logged above)")
         } else if (!farHeard) {
             logOneSidedDiagnostics()
             AppLogger.w(TAG, "VoIP recording captured only your side — the other app blocks capture")
-            // On vivo the far side is silenced by the phone until the user turns on vivo's own "In-app call
-            // recording" (Recorder app), so point vivo users to that toggle instead of blaming the app.
             val warning = if (DeviceInfo.isVivo()) R.string.voip_one_sided_warning_vivo
                           else R.string.voip_one_sided_warning
             runCatching {
@@ -631,42 +634,64 @@ object VoipRecordingCoordinator {
 
         if (unanswered) {
             AppLogger.i(TAG, "App call ended before it was answered; discarding the held recording")
-            runCatching { saf?.descriptor?.close() }
             runCatching { saf?.stagingFile?.delete() }
-            // Written straight to the folder on a build without staging: the document exists and must go.
             saf?.uri?.let { uri ->
-                runCatching { SafHelper.deleteDocument(DocumentFile.fromSingleUri(context, uri), "the unanswered app call") }
+                if (MediaStoreHelper.isMediaStoreUri(uri)) {
+                    MediaStoreHelper.delete(context, uri)
+                } else {
+                    SafHelper.deleteDocument(DocumentFile.fromSingleUri(context, uri), "the unanswered app call")
+                }
             }
             return
         }
 
-        // Publish now, and only now. The recording was written to app-private storage for the whole
-        // call, so nothing has been visible in the user's folder until this moment — which is what
-        // stops a sync tool uploading a growing or an empty file. See SafHelper.createAudioFile.
+        // MediaStore is already the final local destination; keep it pending/hidden until the call is
+        // complete, optionally rename it with a late caller name, then publish it. Custom SAF output
+        // keeps the upstream staged-copy path.
         val published: Uri? = saf?.let { result ->
-            val staging = result.stagingFile
-            val folder = result.folderUri
-            val outName = result.fileName?.let { name -> caller?.let { VoipLateCaller.withCaller(name, it) } ?: name }
-            val mime = result.mimeType
-            if (staging == null || folder == null || outName == null || mime == null) {
-                AppLogger.e(TAG, "VoIP recording cannot be published: staging details are missing")
-                return@let null
-            }
-            if (!staging.exists() || staging.length() == 0L) {
-                AppLogger.w(TAG, "VoIP capture produced no audio; nothing to publish")
-                runCatching { staging.delete() }
-                return@let null
-            }
-            val uri = SafHelper.publishStagedRecording(context, folder, outName, mime, staging)
-            if (uri != null) {
-                AppLogger.i(TAG, "Published VoIP recording (${staging.length()} bytes) -> $uri")
-                runCatching { staging.delete() }
+            val directUri = result.uri?.takeIf { MediaStoreHelper.isMediaStoreUri(it) }
+            if (directUri != null) {
+                val desiredName = result.fileName?.let { name ->
+                    caller?.let { VoipLateCaller.withCaller(name, it) } ?: name
+                }
+                val finalUri = if (!desiredName.isNullOrBlank() && desiredName != result.fileName) {
+                    MediaStoreHelper.rename(context, directUri, desiredName) ?: directUri
+                } else directUri
+                val size = MediaStoreHelper.info(context, finalUri).sizeBytes ?: 0L
+                if (size <= 0L) {
+                    AppLogger.w(TAG, "VoIP MediaStore capture produced no audio; deleting it")
+                    MediaStoreHelper.delete(context, finalUri)
+                    null
+                } else if (MediaStoreHelper.publish(context, finalUri)) {
+                    AppLogger.i(TAG, "Published local VoIP recording ($size bytes) -> $finalUri")
+                    finalUri
+                } else {
+                    AppLogger.e(TAG, "Could not publish local VoIP recording $finalUri")
+                    null
+                }
             } else {
-                // Kept, not deleted: an unpublished recording on internal storage is recoverable and a
-                // deleted one is not.
-                AppLogger.e(TAG, "Could not publish the VoIP recording; it stays at ${staging.path}")
+                val staging = result.stagingFile
+                val folder = result.folderUri
+                val outName = result.fileName?.let { name -> caller?.let { VoipLateCaller.withCaller(name, it) } ?: name }
+                val mime = result.mimeType
+                if (staging == null || folder == null || outName == null || mime == null) {
+                    AppLogger.e(TAG, "VoIP recording cannot be published: staging details are missing")
+                    return@let null
+                }
+                if (!staging.exists() || staging.length() == 0L) {
+                    AppLogger.w(TAG, "VoIP capture produced no audio; nothing to publish")
+                    runCatching { staging.delete() }
+                    return@let null
+                }
+                val uri = SafHelper.publishStagedRecording(context, folder, outName, mime, staging)
+                if (uri != null) {
+                    AppLogger.i(TAG, "Published VoIP recording (${staging.length()} bytes) -> $uri")
+                    runCatching { staging.delete() }
+                } else {
+                    AppLogger.e(TAG, "Could not publish the VoIP recording; it stays at ${staging.path}")
+                }
+                uri
             }
-            uri
         }
 
         // The Home list reads CallVault's own catalog, not the folder — a file that is never recorded
