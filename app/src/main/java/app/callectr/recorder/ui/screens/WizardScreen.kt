@@ -202,12 +202,10 @@ fun WizardScreen(
     val safeIndex = stepIndex.coerceIn(0, steps.lastIndex)
     val currentStep = steps[safeIndex]
 
-    // Whether the current step's requirements are satisfied (gates the Next/Finish button).
-    val canAdvance = canAdvanceFrom(
-        step = currentStep,
-        hasRecordingFolder = recordingFolderUri != null,
-        hasDriveFolder = !usesDrive || driveFolderUri != null
-    )
+    // Beta review mode: every setup step must be inspectable even when one prerequisite is broken.
+    // We still surface missing requirements inside the relevant step, but Next/Finish never traps the
+    // tester on one screen. This lets us review and improve all eight setup steps independently.
+    val canAdvance = true
 
     val isLastStep = safeIndex == steps.lastIndex
 
@@ -701,6 +699,10 @@ private fun StorageStep(
             chosenName = recordingFolderLabel,
             onClick = onPickRecordingFolder
         )
+
+        if (recordingFolderLabel == null) {
+            WarningCard(stringResource(R.string.wizard_storage_missing_review_note))
+        }
 
         if (usesDrive) {
             FolderPickerCard(
