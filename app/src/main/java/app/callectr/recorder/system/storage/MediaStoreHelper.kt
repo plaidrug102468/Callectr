@@ -80,7 +80,7 @@ object MediaStoreHelper {
     /** Make a finished recording visible to Files/audio-player apps. */
     fun publish(context: Context, uri: Uri): Boolean = runCatching {
         val values = ContentValues().apply { put(MediaStore.Audio.Media.IS_PENDING, 0) }
-        context.contentResolver.update(uri, values, null, null) >= 0
+        context.contentResolver.update(uri, values, null, null) > 0
     }.onFailure {
         AppLogger.e(TAG, "Failed to publish MediaStore recording $uri", it)
     }.getOrDefault(false)
@@ -96,7 +96,7 @@ object MediaStoreHelper {
                 put(MediaStore.MediaColumns.MIME_TYPE, "audio/mp4")
             }
         }
-        if (context.contentResolver.update(uri, values, null, null) >= 0) uri else null
+        if (context.contentResolver.update(uri, values, null, null) > 0) uri else null
     }.onFailure {
         AppLogger.w(TAG, "Failed to rename MediaStore recording $uri: ${it.message}")
     }.getOrNull()
