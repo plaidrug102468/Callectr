@@ -28,6 +28,7 @@ import app.callectr.recorder.server.IRecorderService
 import app.callectr.recorder.server.RecorderConnection
 import app.callectr.recorder.server.RecorderServiceImpl
 import app.callectr.recorder.system.storage.SafHelper
+import app.callectr.recorder.system.storage.MediaStoreHelper
 import app.callectr.recorder.data.recordings.RecordingCatalog
 import app.callectr.recorder.data.waveform.RecordingExtrasRepository
 import app.callectr.recorder.transcription.TranscriptionScheduler
@@ -159,40 +160,57 @@ object VoipRecordingCoordinator {
         }
 
         val folderUri = prefs.getRecordingFolderUri()
-        if (!SafHelper.isFolderValid(context, folderUri)) {
-            // User-owned and permanent until they fix it: every call goes the same way until then.
-            reportMissedIfReal(context, R.string.voip_missed_no_folder, Prerequisite.RECORDING_FOLDER)
-            AppLogger.e(TAG, "VoIP call detected but the recording folder is missing/unwritable")
-            return
-        }
-
         val fileName = buildFileName(codec, appLabel, caller)
 
-        val saf = SafHelper.createAudioFile(context, folderUri, fileName, codec.mimeType)
-        if (saf == null) {
-            reportMissedIfReal(context, R.string.voip_missed_no_folder, Prerequisite.RECORDING_FOLDER)
-            AppLogger.e(TAG, "Could not create the VoIP output file")
-            return
+        // Match the carrier path: null means Callectr's automatic local MediaStore destination.
+        // A custom SAF folder is still supported when the user explicitly chooses one later.
+        val output = if (folderUri == null) {
+            val media = MediaStoreHelper.createAudioFile(context, fileName, codec.mimeType)
+                ?: run {
+                    reportMissedIfReal(context, R.string.voip_missed_no_folder, Prerequisite.RECORDING_FOLDER)
+                    AppLogger.e(TAG, "Could not create the VoIP output in automatic local storage")
+                    return
+                }
+            SafHelper.SafResult(
+                uri = media.uri,
+                descriptor = media.descriptor,
+                displayName = media.displayName,
+                stagingFile = null,
+                folderUri = null,
+                fileName = fileName,
+                mimeType = codec.mimeType,
+            )
+        } else {
+            if (!SafHelper.isFolderValid(context, folderUri)) {
+                reportMissedIfReal(context, R.string.voip_missed_no_folder, Prerequisite.RECORDING_FOLDER)
+                AppLogger.e(TAG, "VoIP call detected but the custom recording folder is missing/unwritable")
+                return
+            }
+            SafHelper.createAudioFile(context, folderUri, fileName, codec.mimeType)
+                ?: run {
+                    reportMissedIfReal(context, R.string.voip_missed_no_folder, Prerequisite.RECORDING_FOLDER)
+                    AppLogger.e(TAG, "Could not create the VoIP output file")
+                    return
+                }
         }
 
         val started = runCatching {
-            service.startVoipRecording(codec.cliKey, bitRate, saf.descriptor)
+            service.startVoipRecording(codec.cliKey, bitRate, output.descriptor)
         }.onFailure { AppLogger.e(TAG, "startVoipRecording threw: ${it.message}", it) }.getOrDefault(false)
 
         if (!started) {
-            // Most likely the policy was not armed before the call — nothing can be captured now, so
-            // remove the empty file rather than leaving a 0-byte recording in the user's folder.
             reportMissedIfReal(context, R.string.voip_missed_not_ready, null)
-            AppLogger.e(TAG, "VoIP recording refused by the daemon; discarding the empty file")
-            runCatching { saf.descriptor.close() }
-            // Nothing to delete in the user's folder: the destination is not created until a recording
-            // has actually been made. Only the staging file exists, and it holds nothing.
-            runCatching { saf.stagingFile?.delete() }
+            AppLogger.e(TAG, "VoIP recording refused by the daemon; discarding the empty output")
+            runCatching { output.descriptor.close() }
+            output.uri?.takeIf { MediaStoreHelper.isMediaStoreUri(it) }?.let {
+                MediaStoreHelper.delete(context, it)
+            }
+            runCatching { output.stagingFile?.delete() }
             return
         }
 
         recording = true
-        pending = saf
+        pending = output
         codecMime = codec.mimeType
         // A timeline and a mark buffer for this call, then the controls. Before this an app call
         // could be recorded from start to finish with nothing to stop it and nothing to mark.
