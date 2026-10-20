@@ -30,6 +30,7 @@ import app.callectr.recorder.server.RecorderBackend
 import app.callectr.recorder.services.recording.handoff.HandoffReceiver
 import app.callectr.recorder.services.recording.handoff.HandoffSource
 import app.callectr.recorder.system.storage.SafHelper
+import app.callectr.recorder.system.storage.MediaStoreHelper
 import app.callectr.recorder.integrations.scrcpy.ServerExtractor
 import app.callectr.recorder.utils.AppLogger
 import app.callectr.recorder.utils.RecordingFileNameFormatter
@@ -134,6 +135,9 @@ class AudioRecordingEngine {
     private var pendingFolderUri: Uri? = null
     private var pendingFileName: String? = null
     private var pendingMimeType: String? = null
+
+    /** Non-null while the default MediaStore destination is still hidden as IS_PENDING. */
+    private var pendingMediaStoreUri: Uri? = null
 
     /**
      * The exact number of audio bytes captured this session, when known reliably — set only after a
@@ -298,13 +302,6 @@ class AudioRecordingEngine {
         val preferences = AppPreferences(context)
         val folderUri = preferences.getRecordingFolderUri()
 
-        if (!SafHelper.isFolderValid(context, folderUri)) {
-            throw PipelineInitializationException(
-                userFriendlyMessage = context.getString(R.string.recording_error_folder_missing),
-                technicalLogMessage = "Cannot start recording: Selected Output folder is missing, invalid, or we do not have permission to write to it"
-            )
-        }
-
         val codecEnum = ScrcpyAudioCodec.fromKey(preferences.getAudioCodec())
         val bitRate = preferences.getAudioBitRate().takeIf { it > 0 } ?: codecEnum.defaultBitRate
         val audioSourceEnum = ScrcpyAudioSource.fromKey(preferences.getAudioSource())
@@ -312,22 +309,48 @@ class AudioRecordingEngine {
         AppLogger.i(TAG, "Starting recording pipeline: source=${audioSourceEnum.cliKey} codec=${codecEnum.cliKey} bitrate=$bitRate")
 
         val fileName = RecordingFileNameFormatter.formatFileName(context, metadata, codecEnum)
-
-        val safResult = SafHelper.createAudioFile(context, folderUri, fileName, codecEnum.mimeType)
-            ?: throw PipelineInitializationException(
-                userFriendlyMessage = context.getString(R.string.recording_error_file_creation),
-                technicalLogMessage = "Failed to create audio file in SAF storage"
-            )
-
-        AppLogger.d(TAG, "Created SAF recording file: ${safResult.uri}")
-
         appContext = context.applicationContext
-        currentRecordingUri = safResult.uri
-        outputPfd = safResult.descriptor
-        stagingFile = safResult.stagingFile
-        pendingFolderUri = safResult.folderUri
-        pendingFileName = safResult.fileName
-        pendingMimeType = safResult.mimeType
+
+        // Default path: no picker, no broad storage permission. Android gives Callectr its own
+        // Recordings/Callectr MediaStore location and the item stays hidden until finalised.
+        // A legacy/custom SAF folder is still honoured when one is explicitly configured in Settings.
+        val outputDisplayName: String
+        if (folderUri == null) {
+            val media = MediaStoreHelper.createAudioFile(context, fileName, codecEnum.mimeType)
+                ?: throw PipelineInitializationException(
+                    userFriendlyMessage = context.getString(R.string.recording_error_file_creation),
+                    technicalLogMessage = "Failed to create audio file in MediaStore Recordings/Callectr"
+                )
+            currentRecordingUri = media.uri
+            outputPfd = media.descriptor
+            pendingMediaStoreUri = media.uri
+            outputDisplayName = media.displayName
+            stagingFile = null
+            pendingFolderUri = null
+            pendingFileName = null
+            pendingMimeType = null
+            AppLogger.i(TAG, "Using automatic local storage: ${media.displayName}")
+        } else {
+            if (!SafHelper.isFolderValid(context, folderUri)) {
+                throw PipelineInitializationException(
+                    userFriendlyMessage = context.getString(R.string.recording_error_folder_missing),
+                    technicalLogMessage = "Configured custom output folder is missing or no longer writable"
+                )
+            }
+            val safResult = SafHelper.createAudioFile(context, folderUri, fileName, codecEnum.mimeType)
+                ?: throw PipelineInitializationException(
+                    userFriendlyMessage = context.getString(R.string.recording_error_file_creation),
+                    technicalLogMessage = "Failed to create audio file in custom SAF storage"
+                )
+            currentRecordingUri = safResult.uri
+            outputPfd = safResult.descriptor
+            stagingFile = safResult.stagingFile
+            pendingFolderUri = safResult.folderUri
+            pendingFileName = safResult.fileName
+            pendingMimeType = safResult.mimeType
+            outputDisplayName = safResult.displayName
+            AppLogger.d(TAG, "Using custom SAF recording folder")
+        }
 
         // Resilient recording (Option B) opt-in: when ENABLED and the source can be captured via a Java
         // AudioRecord (voice-call/mic/voice-communication/…), use the handoff pipeline — the daemon hands
@@ -368,7 +391,7 @@ class AudioRecordingEngine {
             )
         }
 
-        scrcpyAudioMuxer = ScrcpyAudioMuxer(outputPfd!!.fileDescriptor, safResult.displayName)
+        scrcpyAudioMuxer = ScrcpyAudioMuxer(outputPfd!!.fileDescriptor, outputDisplayName)
 
         val launcher = try {
             ScrcpyLauncher.start(context, audioSourceEnum, codecEnum, bitRate)
@@ -627,6 +650,7 @@ class AudioRecordingEngine {
             }
             runCatching { outputPfd?.close() }
             handoffRecording = false
+            finalizeMediaStoreIfNeeded()
             finalizeStagingIfNeeded()
             return
         }
@@ -651,6 +675,7 @@ class AudioRecordingEngine {
             }
             runCatching { outputPfd?.close() }
             daemonRecording = false
+            finalizeMediaStoreIfNeeded()
             finalizeStagingIfNeeded()
             return
         }
@@ -670,7 +695,22 @@ class AudioRecordingEngine {
         runCatching { audioPipeReadScope?.cancel() }
         runCatching { scrcpyAudioMuxer?.close() }
         runCatching { outputPfd?.close() }
+        finalizeMediaStoreIfNeeded()
         finalizeStagingIfNeeded()
+    }
+
+    /** Publish the default local MediaStore item only after the muxer has finalised it. */
+    private fun finalizeMediaStoreIfNeeded() {
+        val uri = pendingMediaStoreUri ?: return
+        pendingMediaStoreUri = null
+        val ctx = appContext ?: return
+        if (MediaStoreHelper.publish(ctx, uri)) {
+            val info = MediaStoreHelper.info(ctx, uri)
+            lastCapturedByteCount = info.sizeBytes
+            AppLogger.i(TAG, "Published automatic local recording → $uri (${info.sizeBytes ?: -1L} bytes)")
+        } else {
+            AppLogger.e(TAG, "Could not publish automatic local recording $uri")
+        }
     }
 
     /**
@@ -731,7 +771,11 @@ class AudioRecordingEngine {
             // made, so a failed start leaves the user's folder untouched. Kept for the case where
             // release() managed to publish before the cancel arrived.
             currentRecordingUri?.let { uri ->
-                DocumentFile.fromSingleUri(context, uri)?.delete()
+                if (MediaStoreHelper.isMediaStoreUri(uri)) {
+                    MediaStoreHelper.delete(context, uri)
+                } else {
+                    DocumentFile.fromSingleUri(context, uri)?.delete()
+                }
             }
             currentRecordingUri = null
             AppLogger.d(TAG, "Cleaned up after start failure")
