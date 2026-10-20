@@ -148,7 +148,6 @@ import com.mikepenz.aboutlibraries.ui.compose.m3.LibrariesContainer
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.mikepenz.aboutlibraries.ui.compose.android.produceLibraries
-import android.net.Uri
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
