@@ -62,7 +62,7 @@ jobs:
           new_pkg = "app.callectr.recorder"
 
           # Replace package-dependent identifiers in UTF-8 text files.
-          skip_parts = {".git", ".gradle", "build"}
+          skip_parts = {".git", ".github", ".gradle", "build"}
           for p in root.rglob("*"):
               if not p.is_file() or any(part in skip_parts for part in p.parts):
                   continue
