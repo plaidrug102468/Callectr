@@ -147,22 +147,9 @@ fun PermissionsScreen(
         }
         onPermissionGranted()
     }
-    // Battery-optimization exemption opens a system screen; using StartActivityForResult brings the
-    // user back to CallVault when they're done so the UI refreshes (vs. a fire-and-forget startActivity).
+    // Keep first-run simple: after Android's battery-exemption screen, return straight to Callectr.
+    // OEM-specific background tuning remains an advanced diagnostic later.
     val batteryExemptionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        // The Doze modal grants the standard battery-optimization exemption (what `batteryExempted`
-        // detects). On OEMs like OxygenOS that is NOT enough — the per-app battery mode stays
-        // "Intelligent/Smart", which still throttles the background daemon — and no public API can set
-        // it to "Allow background activity / Unrestricted". So guide the user to App Info (where OnePlus
-        // exposes that mode) with a one-time hint. Best-effort; harmless if the OEM lacks the setting.
-        //
-        // Open App Info FIRST, THEN refresh the onboarding state: this way the step advancing happens
-        // hidden BEHIND the App Info page, so the user lands on App Info (not on a wizard step that
-        // visibly jumped ahead before the settings page appeared).
-        runCatching {
-            Toast.makeText(activityContext, R.string.permission_battery_oem_hint, Toast.LENGTH_LONG).show()
-            activityContext.openAppSettings()
-        }
         onPermissionGranted()
     }
 
@@ -215,43 +202,7 @@ fun PermissionsContent(
 ) {
     val context = LocalContext.current
 
-    // Developer Options + Wireless Debugging are device/global states (not part of OnboardingStatus).
-    // Read both here so the ADB card AND the bottom CTA can react to them, and re-evaluate on every
-    // ON_RESUME so returning from the system Developer Options / Wireless debugging screen reflects
-    // the new state immediately.
-    var devOptionsEnabled by remember { mutableStateOf(isDeveloperOptionsEnabled(context)) }
-    // Distinct from `!devOptionsEnabled`: a phone that will not say is neither on nor off, and must not
-    // be sent to About phone. See [shouldOfferBuildNumberStep] and issue #40.
     var offerBuildNumberStep by remember { mutableStateOf(shouldOfferBuildNumberStep(context)) }
-    // Re-read after any change to the backend choice; Shizuku's server can also stop on its own.
-    var backendRefresh by remember { mutableIntStateOf(0) }
-    val privilegedMode = remember(backendRefresh) { AppPreferences(context).getPrivilegedMode() }
-    val shizukuStatus = remember(backendRefresh) { RecorderBackend.shizukuStatus(context) }
-
-    // The Shizuku fork is a question, and a question has to be answerable. Standalone is already the
-    // mode for anyone who has not chosen otherwise, and RecorderBackend.switchTo returns early when the
-    // mode is unchanged — so "Use CallVault" changed nothing at all and the card could never be sent
-    // away. Remembering the answer for this screen is enough: the card exists to ask once.
-    var shizukuOfferDeclined by remember { mutableStateOf(false) }
-
-    // A mode switch is seconds of blocking work — a teardown that polls for the old binder to die, then
-    // a wait for the new one — and it used to run straight off the button's onClick, on the main
-    // thread. Same shape as Settings' PrivilegedModeSubSection now: off the main thread, behind the
-    // uninterruptible dialog, through completeSwitch, which is the one place that decides a switch is
-    // actually finished (a live binder is not the finish line; VoIP arming lands after it).
-    var switching by remember { mutableStateOf<PrivilegedMode?>(null) }
-    var switchResult by remember { mutableStateOf<ModeSwitchResult?>(null) }
-    val scope = rememberCoroutineScope()
-
-    fun startSwitch(target: PrivilegedMode) {
-        switching = target
-        switchResult = null
-        scope.launch {
-            switchResult = withContext(Dispatchers.IO) { RecorderBackend.completeSwitch(context, target) }
-            backendRefresh++
-        }
-    }
-
     var wirelessDebuggingEnabled by remember {
         mutableStateOf(AdbShell.isWirelessDebuggingEnabled(context))
     }
@@ -259,7 +210,6 @@ fun PermissionsContent(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                devOptionsEnabled = isDeveloperOptionsEnabled(context)
                 offerBuildNumberStep = shouldOfferBuildNumberStep(context)
                 wirelessDebuggingEnabled = AdbShell.isWirelessDebuggingEnabled(context)
             }
@@ -268,9 +218,75 @@ fun PermissionsContent(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // Is the next needed step the ADB step? (notifications already granted, ADB not yet connected).
-    // Only in that moment does the bottom CTA become Wireless-debugging / Developer-Options aware.
-    val isAdbStep = !status.isComplete() && status.notificationsGranted && !status.adbConnected
+    val currentIndex = when {
+        !status.notificationsGranted -> 0
+        !status.adbConnected -> 1
+        !status.contactsGranted -> 2
+        !status.phoneStateGranted -> 3
+        !status.callLogGranted -> 4
+        !status.batteryExempted -> 5
+        else -> 6
+    }
+    val totalSteps = 6
+    val isAdbStep = currentIndex == 1
+
+    val currentIcon = when (currentIndex) {
+        0 -> Icons.Default.Notifications
+        1 -> Icons.Default.DeveloperMode
+        2 -> Icons.Default.RecentActors
+        3 -> Icons.Default.Phone
+        4 -> Icons.Default.History
+        5 -> Icons.Default.BatteryStd
+        else -> Icons.Default.Phone
+    }
+    val currentTitle = when (currentIndex) {
+        0 -> "Allow notifications"
+        1 -> "Pair Callectr with Android"
+        2 -> "Allow contacts"
+        3 -> "Allow phone access"
+        4 -> "Allow call history"
+        5 -> "Allow background operation"
+        else -> "Permissions complete"
+    }
+    val currentBody = when (currentIndex) {
+        0 -> "Callectr uses notifications to show recording status and the one-time pairing-code entry."
+        1 -> when {
+            offerBuildNumberStep -> "Developer Options must be enabled once. Callectr will open the correct Android settings page."
+            !wirelessDebuggingEnabled -> "Turn on Wireless debugging. It gives Callectr the Android-level access needed to start the recorder."
+            else -> "Tap Pair, then choose “Pair device with pairing code” in Android. Enter the six-digit code in Callectr’s notification."
+        }
+        2 -> "Used to show caller names. More advanced contact filters can be configured later."
+        3 -> "Required to detect when a normal cellular call starts, connects and ends."
+        4 -> "Used to identify the completed call and its phone number reliably."
+        5 -> "Prevents Android from putting Callectr to sleep while it needs to detect and finish recordings."
+        else -> "Everything required for the first recording test is ready."
+    }
+
+    val buttonText = when {
+        currentIndex >= totalSteps -> "Continue"
+        isAdbStep && offerBuildNumberStep -> "Open device info"
+        isAdbStep && !wirelessDebuggingEnabled -> "Open Wireless debugging"
+        isAdbStep -> "Pair"
+        else -> "Continue"
+    }
+
+    val buttonAction: () -> Unit = when {
+        currentIndex >= totalSteps -> onGrantAccessButtonClick
+        isAdbStep && offerBuildNumberStep -> { { context.openDeviceInfoSettings() } }
+        isAdbStep && !wirelessDebuggingEnabled -> {
+            {
+                app.callectr.recorder.integrations.adb.AdbPairingService.start(context)
+                context.openWirelessDebugging()
+            }
+        }
+        isAdbStep -> {
+            {
+                onGrantAccessButtonClick()
+                context.openWirelessDebugging()
+            }
+        }
+        else -> onGrantAccessButtonClick
+    }
 
     Surface(
         modifier = modifier.navigationBarsPadding().fillMaxSize(),
@@ -278,176 +294,88 @@ fun PermissionsContent(
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
+                modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(
                     start = 24.dp,
                     end = 24.dp,
                     top = 28.dp,
                     bottom = 16.dp
                 ),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 item {
                     Text(
-                        text = stringResource(R.string.permissions_ui_eyebrow).uppercase(),
+                        text = if (currentIndex < totalSteps) "SETUP \${currentIndex + 1} OF \$totalSteps" else "SETUP COMPLETE",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary
                     )
                     Spacer(Modifier.height(8.dp))
                     CvHero(
-                        title = stringResource(R.string.permissions_ui_hero_title),
-                        subtitle = stringResource(R.string.permissions_ui_hero_subtitle)
+                        title = "Get Callectr ready",
+                        subtitle = "One thing at a time. No recording-folder selection and no advanced features during first setup."
                     )
-                    Spacer(Modifier.height(6.dp))
-                    CvSectionHeader(text = stringResource(R.string.permissions_ui_section_label))
                 }
 
-                // Notifications FIRST: ADB pairing is driven entirely through a notification, so
-                // notifications must be granted before ADB pairing — the card order mirrors that.
                 item {
-                    PermissionCard(
-                        icon = Icons.Default.Notifications,
-                        label = stringResource(R.string.permission_notifications_label),
-                        description = stringResource(R.string.permission_notifications_description),
-                        granted = status.notificationsGranted
-                    )
+                    CvCard {
+                        Box(
+                            modifier = Modifier
+                                .size(46.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = currentIcon,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Spacer(Modifier.height(14.dp))
+                        Text(
+                            text = currentTitle,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = currentBody,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (isAdbStep) {
+                            Spacer(Modifier.height(14.dp))
+                            CvStatusPill(
+                                text = if (wirelessDebuggingEnabled) "Wireless debugging on" else "Wireless debugging off",
+                                tone = if (wirelessDebuggingEnabled) CvTone.Success else CvTone.Neutral
+                            )
+                        }
+                    }
                 }
 
-                // Offered ONLY to someone who already runs Shizuku. For everyone else this card does
-                // not exist and setup is exactly what it always was — CallVault must never read as an
-                // instruction to install a second app.
-                if (shizukuStatus != ShizukuStatus.NOT_INSTALLED && !shizukuOfferDeclined) {
-                    item {
-                        ShizukuOfferCard(
-                            status = shizukuStatus,
-                            mode = privilegedMode,
-                            onUseShizuku = { startSwitch(PrivilegedMode.SHIZUKU) },
-                            onUseCallVault = {
-                                // Answering the question retires it either way; only leaving Shizuku is
-                                // an actual switch, and asking for one we are already in would spend the
-                                // whole ensureRunning wait to arrive back where we started.
-                                shizukuOfferDeclined = true
-                                if (privilegedMode.needsShizuku) startSwitch(PrivilegedMode.STANDALONE)
-                            },
-                            onGrant = {
-                                ShizukuBackend.requestPermission()
-                                backendRefresh++
-                            },
+                item {
+                    CvCard {
+                        Text(
+                            text = "What happens after this?",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = "Callectr applies one safe baseline automatically: manual recording, AAC/M4A, and Internal storage → Recordings → Callectr. Then we test one cellular call before adding anything else.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            text = "Callectr \${app.callectr.recorder.BuildConfig.VERSION_NAME} • build \${app.callectr.recorder.BuildConfig.VERSION_CODE}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
-
-                // ADB is the hero step: it gets its OWN full-width layout (title row + full-width
-                // description + hint + Developer Options status/shortcut) so the long content reads well.
-                // Skipped entirely in Shizuku mode: there is nothing to pair, and a card demanding
-                // pairing would be asking for setup the user has just been told they can skip.
-                if (privilegedMode != PrivilegedMode.SHIZUKU) {
-                    item {
-                        AdbPermissionCard(
-                            adbConnected = status.adbConnected,
-                            devOptionsEnabled = devOptionsEnabled,
-                            devOptionsProvenOff = offerBuildNumberStep,
-                            wirelessDebuggingEnabled = wirelessDebuggingEnabled
-                        )
-                    }
-                }
-
-                // Remaining runtime permissions, in the original fixed order. Built inside an item so
-                // each stringResource call runs in composable context.
-                // Recording-folder selection moved out of onboarding into the in-app settings wizard.
-                item {
-                    PermissionCard(
-                        icon = Icons.Default.RecentActors,
-                        label = stringResource(R.string.permission_contacts_label),
-                        description = stringResource(R.string.permission_contacts_description),
-                        granted = status.contactsGranted
-                    )
-                }
-                item {
-                    PermissionCard(
-                        icon = Icons.Default.Phone,
-                        label = stringResource(R.string.permission_phone_state_label),
-                        description = stringResource(R.string.permission_phone_state_description),
-                        granted = status.phoneStateGranted
-                    )
-                }
-                item {
-                    PermissionCard(
-                        icon = Icons.Default.History,
-                        label = stringResource(R.string.permission_call_log_label),
-                        description = stringResource(R.string.permission_call_log_description),
-                        granted = status.callLogGranted
-                    )
-                }
-                item {
-                    PermissionCard(
-                        icon = Icons.Default.BatteryStd,
-                        label = stringResource(R.string.permission_battery_label),
-                        description = stringResource(R.string.permission_battery_description),
-                        granted = status.batteryExempted
-                    )
-                }
-                // Recommended, not required: with USB debugging on, CallVault can switch Wireless
-                // debugging off — `adbd` needs one of the two, and this is the one that opens no
-                // network port. Shown as "Recommended" rather than "Required" so nobody is misled
-                // into thinking recording depends on it.
-                item {
-                    // Tri-state, and this card is OUTSIDE the Shizuku mode gate, so it is one of only two
-                    // places the redaction reaches a Shizuku user. A phone that will not say is shown as
-                    // granted rather than as a standing "Recommended" nag: on a redacting build the nag
-                    // would be permanent and unfixable, and this step is advice, not a requirement.
-                    val usb = AdbShell.usbDebuggingState(LocalContext.current)
-                    val nag = usb.isOff
-                    PermissionCard(
-                        icon = Icons.Default.Usb,
-                        label = stringResource(R.string.permission_usb_debugging_label),
-                        description = stringResource(R.string.permission_usb_debugging_description),
-                        granted = !nag,
-                        pillText = if (nag) stringResource(R.string.general_recommended) else null,
-                        pillTone = if (nag) CvTone.Neutral else null,
-                    )
-                }
-                // The same choice as in Settings: may CallVault switch Wireless debugging back on after the
-                // user turned it off? Asked here too, because it decides how the app treats a switch the
-                // user is about to be told to flip.
-                item {
-                    CvCard(contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
-                        WirelessDebuggingEnforceToggle()
-                    }
-                }
-            }
-
-            // Persistent bottom CTA.
-            //
-            // When the next needed step is the ADB step (notifications granted, not yet connected),
-            // the button adapts to Wireless-Debugging / Developer-Options state so the user is guided
-            // to the right system screen instead of always seeing "Authorize":
-            //   - Dev Options OFF  → "Open device info"        → openDeviceInfoSettings()
-            //   - Dev ON, WD OFF   → "Open Wireless debugging"  → openDeveloperSettings()
-            //   - WD ON (unpaired) → "Authorize"                → onGrantAccessButtonClick (setupAdb)
-            // Every other step keeps the original logic: Continue / Grant Access → onGrantAccessButtonClick.
-            // The ADB step is now a single tap toward pairing regardless of WD/dev-options state
-            // (the action below adapts), so the label is just "Pair" throughout.
-            val adbStepLabel: String? = if (isAdbStep) stringResource(R.string.permission_adb_pair) else null
-            val adbStepAction: (() -> Unit)? = when {
-                !isAdbStep             -> null
-                // Only a PROVEN off routes here. Anything else falls through to pairing, which is the
-                // step that can actually advance -- see [shouldOfferBuildNumberStep].
-                offerBuildNumberStep   -> { { context.openDeviceInfoSettings() } }
-                // WD off → arm the pairing service (it waits on the adb_wifi_enabled setting and
-                // auto-starts discovery the moment WD is toggled on), THEN deep-link to the Wireless
-                // debugging toggle. The user never has to return to CallVault to tap Authorize.
-                !wirelessDebuggingEnabled -> {
-                    {
-                        app.callectr.recorder.integrations.adb.AdbPairingService.start(context)
-                        context.openWirelessDebugging()
-                    }
-                }
-                // WD on → start pairing AND open the Wireless debugging screen so the user can tap
-                // "Pair device with pairing code" and read the code to enter in the notification.
-                else                   -> { { onGrantAccessButtonClick(); context.openWirelessDebugging() } }
             }
 
             Column(
@@ -457,25 +385,8 @@ fun PermissionsContent(
                     .padding(top = 8.dp, bottom = 16.dp)
             ) {
                 CvPrimaryButton(
-                    text = adbStepLabel ?: when {
-                        status.isComplete()  -> stringResource(R.string.general_continue)
-                        !status.adbConnected -> stringResource(R.string.permission_adb_setup)
-                        else                 -> stringResource(R.string.permissions_grant_access)
-                    },
-                    onClick = adbStepAction ?: onGrantAccessButtonClick
-                )
-            }
-
-            // Owns its own window, so it sits at the end of the layout without taking part in it.
-            switching?.let { target ->
-                ModeSwitchDialog(
-                    target = target,
-                    result = switchResult,
-                    onDismiss = {
-                        switching = null
-                        switchResult = null
-                        backendRefresh++
-                    },
+                    text = buttonText,
+                    onClick = buttonAction
                 )
             }
         }
