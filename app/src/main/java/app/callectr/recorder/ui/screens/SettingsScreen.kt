@@ -281,25 +281,35 @@ fun SettingsScreen(
     val contactPickerState by contactPickerViewModel.contactPickerState.collectAsState()
 
     // Folder picker — PersistentFolderPickerContract keeps access alive after a reboot.
-    val folderPickerLauncher = rememberLauncherForActivityResult(PersistentFolderPickerContract()) { uri ->
-        if (uri != null) {
+    val folderPickerLauncher = rememberLauncherForActivityResult(PersistentFolderPickerContract()) { selection ->
+        if (selection != null) {
+            val uri = selection.uri
             if (SafHelper.isCloudFolder(uri)) {
                 // Cloud folders (Google Drive, …) reject "rw" and report length asynchronously, which
                 // breaks live capture. Refuse it here; the Drive backup option handles cloud copies.
                 Toast.makeText(context, context.getString(R.string.folder_cloud_rejected), Toast.LENGTH_LONG).show()
             } else {
-                context.takePersistableFolderPermission(uri)
-                viewModel.preferences.setRecordingFolderUri(uri)
+                val persisted = context.takePersistableFolderPermission(selection)
+                if (persisted || SafHelper.isFolderValid(context, uri)) {
+                    viewModel.preferences.setRecordingFolderUri(uri)
+                } else {
+                    Toast.makeText(context, context.getString(R.string.recording_error_folder_missing), Toast.LENGTH_LONG).show()
+                }
             }
         }
         viewModel.refresh()
     }
 
-    // Drive folder picker — same contract; persists READ + WRITE access across reboots.
-    val driveFolderPickerLauncher = rememberLauncherForActivityResult(PersistentFolderPickerContract()) { uri ->
-        if (uri != null) {
-            context.takePersistableFolderPermission(uri)
-            viewModel.setDriveFolderUri(uri)
+    // Drive folder picker — same contract; persists the exact READ/WRITE flags Android returned.
+    val driveFolderPickerLauncher = rememberLauncherForActivityResult(PersistentFolderPickerContract()) { selection ->
+        if (selection != null) {
+            val uri = selection.uri
+            val persisted = context.takePersistableFolderPermission(selection)
+            if (persisted || SafHelper.isFolderValid(context, uri)) {
+                viewModel.setDriveFolderUri(uri)
+            } else {
+                Toast.makeText(context, context.getString(R.string.recording_error_folder_missing), Toast.LENGTH_LONG).show()
+            }
         }
         viewModel.refresh()
     }
