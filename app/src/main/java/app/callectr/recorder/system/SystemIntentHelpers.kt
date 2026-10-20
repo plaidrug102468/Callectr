@@ -100,9 +100,18 @@ class PersistentFolderPickerContract : ActivityResultContract<Uri?, PersistableF
 
     override fun parseResult(resultCode: Int, intent: Intent?): PersistableFolderSelection? {
         if (resultCode != Activity.RESULT_OK) return null
-        val uri = intent?.data ?: return null
+        // Samsung/One UI has been observed returning the selected tree in ClipData instead of
+        // Intent.data on some DocumentsUI flows. Accept both shapes so a valid user selection never
+        // disappears when control returns to Callectr.
+        val uri = intent?.data
+            ?: intent?.clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
+            ?: run {
+                AppLogger.w(TAG, "Folder picker returned RESULT_OK but no URI (data and ClipData were empty)")
+                return null
+            }
         val mask = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         val flags = intent.flags and mask
+        AppLogger.i(TAG, "Folder picker result uri=$uri grantFlags=$flags")
         return PersistableFolderSelection(uri = uri, grantFlags = flags)
     }
 }
