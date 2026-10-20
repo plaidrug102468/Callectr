@@ -284,6 +284,7 @@ class RecordingForegroundService : Service() {
 
         when (action) {
             ACTION_START_RECORDING, ACTION_MANUAL_START -> {
+                LiveRecordOverlay.dismiss(LiveRecordOverlay.Owner.CARRIER)
                 if (hasSession || isCurrentlyRecording) {
                     AppLogger.w(TAG, "Start request ignored. A session is already on-going.")
                     return START_NOT_STICKY
@@ -353,6 +354,7 @@ class RecordingForegroundService : Service() {
 
             ACTION_STANDBY -> {
                 currentState = RecordingServiceState.Standby(currentMeta)
+                LiveRecordOverlay.showCarrier(this)
                 serviceScope.launch(Dispatchers.IO) {
                     // Warm the persistent daemon at ring/dial so the call records instantly over binder.
                     // ensureServerRunning is a no-op when the binder is already connected (WD untouched); it
@@ -522,6 +524,7 @@ class RecordingForegroundService : Service() {
      * removes the foreground notification, and stops the service.
      */
     private fun stopRecordingSessionAndService() {
+        LiveRecordOverlay.dismiss(LiveRecordOverlay.Owner.CARRIER)
         // First, so no state change from here on re-posts the notification this is about to remove.
         // The finished recording keeps showing as it was until the notification goes.
         isShuttingDown = true
