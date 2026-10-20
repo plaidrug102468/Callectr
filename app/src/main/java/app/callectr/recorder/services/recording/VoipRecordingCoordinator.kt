@@ -699,10 +699,12 @@ object VoipRecordingCoordinator {
         // RecordingForegroundService, which the VoIP path deliberately does not go through.
         if (saf != null && published != null) {
             val safUri = published
-            val name = saf.displayName.substringAfterLast('/').let { n -> caller?.let { VoipLateCaller.withCaller(n, it) } ?: n }
+            val publishedInfo = if (MediaStoreHelper.isMediaStoreUri(safUri)) MediaStoreHelper.info(context, safUri) else null
+            val name = publishedInfo?.displayName
+                ?: saf.displayName.substringAfterLast('/').let { n -> caller?.let { VoipLateCaller.withCaller(n, it) } ?: n }
             CoroutineScope(Dispatchers.IO).launch {
                 runCatching {
-                    val size = SafHelper.fileSize(context, safUri)
+                    val size = publishedInfo?.sizeBytes ?: SafHelper.fileSize(context, safUri)
                     // The same too-short check the carrier path makes, through the same policy, before
                     // this path's own catalog write. An app call reaches Home by a completely separate
                     // route, so a guard added only over there would leave WhatsApp misdials piling up
@@ -715,10 +717,14 @@ object VoipRecordingCoordinator {
                                 TAG,
                                 "Discarding VoIP '$name': ${durationMs}ms is under the ${minSeconds}s minimum."
                             )
-                            SafHelper.deleteDocument(
-                                DocumentFile.fromSingleUri(context, safUri),
-                                "the too-short VoIP recording '$name'"
-                            )
+                            if (MediaStoreHelper.isMediaStoreUri(safUri)) {
+                                MediaStoreHelper.delete(context, safUri)
+                            } else {
+                                SafHelper.deleteDocument(
+                                    DocumentFile.fromSingleUri(context, safUri),
+                                    "the too-short VoIP recording '$name'"
+                                )
+                            }
                             return@runCatching
                         }
                     }
@@ -771,7 +777,7 @@ object VoipRecordingCoordinator {
                     // tell the two apart and would judge a negative size as EMPTY_FILE, so an unknowable
                     // size must never reach it: recording nothing is the safe direction, not guessing.
                     if (size < 0L) {
-                        AppLogger.i(TAG, "VoIP file size unknown for '$name' (SAF reported $size); skipping the setup-health write")
+                        AppLogger.i(TAG, "VoIP file size unknown for '$name' (storage reported $size); skipping the setup-health write")
                     } else {
                         runCatching {
                             val outcome = CallOutcomes.of(size, daemonDied = false, farPartyHeard = farHeard)
@@ -803,7 +809,7 @@ object VoipRecordingCoordinator {
                 }.onFailure { AppLogger.e(TAG, "Cataloguing the VoIP recording failed: ${it.message}", it) }
             }
         }
-        AppLogger.i(TAG, "VoIP recording stopped (${saf?.uri})")
+        AppLogger.i(TAG, "VoIP recording stopped (published=$published)")
         // Same check as after a carrier recording: a stuck indicator with nothing recording. See [MicOpAutoHeal].
         MicOpAutoHeal.scheduleAfterCall(context, "the VoIP recording")
     }
