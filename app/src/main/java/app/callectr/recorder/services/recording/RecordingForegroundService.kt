@@ -28,6 +28,7 @@ import app.callectr.recorder.data.health.SetupHealthStore
 import app.callectr.recorder.data.health.record
 import app.callectr.recorder.integrations.adb.AdbShell
 import app.callectr.recorder.server.RecorderBackend
+import app.callectr.recorder.server.RecorderConnection
 import app.callectr.recorder.R
 import app.callectr.recorder.data.recordings.RecordingCatalog
 import app.callectr.recorder.data.waveform.RecordingExtrasRepository
