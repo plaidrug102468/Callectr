@@ -1,0 +1,40 @@
+name: Publish Callectr beta1 test APK
+
+on:
+  push:
+    paths:
+      - ".github/workflows/publish-beta1.yml"
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download verified build artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          gh run download 39364428254 -n Callectr-v0.1.0-beta1-debug -D dist
+          ls -l dist
+          test -f dist/Callectr-v0.1.0-beta1-debug.apk
+          test -f dist/Callectr-v0.1.0-beta1-debug.sha256.txt
+          sha256sum -c dist/Callectr-v0.1.0-beta1-debug.sha256.txt
+
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v0.1.0-beta1 >/dev/null 2>&1; then
+            gh release upload v0.1.0-beta1               dist/Callectr-v0.1.0-beta1-debug.apk               dist/Callectr-v0.1.0-beta1-debug.sha256.txt               --clobber
+          else
+            gh release create v0.1.0-beta1               dist/Callectr-v0.1.0-beta1-debug.apk               dist/Callectr-v0.1.0-beta1-debug.sha256.txt               --prerelease               --title "Callectr v0.1.0-beta1 (test build)"               --notes "First Callectr test APK. GPL-compliant fork baseline based on CallVault v2.4.6. This APK is debug-signed for physical-device testing; do not treat this signing identity as the permanent production update key. Carrier and WhatsApp protected-audio capture must still be verified on the target Samsung."
+          fi
