@@ -82,7 +82,9 @@ object OnboardingStatus {
             phoneStateGranted        = PermissionChecks.hasPhoneStatePermission(context),
             callLogGranted           = PermissionChecks.hasCallLogPermission(context),
             batteryExempted          = PermissionChecks.hasBatteryExemption(context),
-            storageSelected          = SafHelper.isFolderValid(context, storageUri),
+            // null now means the recommended automatic MediaStore destination:
+            // Internal storage/Recordings/Callectr. A custom SAF folder is validated only when set.
+            storageSelected          = storageUri == null || SafHelper.isFolderValid(context, storageUri),
             // Embedded-ADB is the privileged transport. Onboarding is satisfied once the user has paired (a
             // persisted flag) — not only while a live connection exists, since a connection is
             // per-process and would otherwise force re-onboarding on every launch. The live
