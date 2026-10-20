@@ -131,13 +131,20 @@ fun WizardScreen(
             if (SafHelper.isCloudFolder(uri)) {
                 Toast.makeText(context, context.getString(R.string.folder_cloud_rejected), Toast.LENGTH_LONG).show()
             } else {
-                // Persist only the flags Android actually returned. Samsung/One UI can reject the old
-                // hard-coded READ|WRITE combination and leave the wizard stuck on "Choose folder".
+                // Save the user's explicit folder choice immediately. On some Samsung/One UI builds
+                // the picker returns a perfectly usable tree URI while the persistable-grant flags are
+                // incomplete or delayed. Beta2 incorrectly made persistence/DocumentFile validation a
+                // prerequisite for remembering the selection, which could loop back to "Choose folder".
+                viewModel.setRecordingFolderUri(uri)
                 val persisted = context.takePersistableFolderPermission(selection)
-                if (persisted || SafHelper.isFolderValid(context, uri)) {
-                    viewModel.setRecordingFolderUri(uri)
-                } else {
-                    Toast.makeText(context, context.getString(R.string.recording_error_folder_missing), Toast.LENGTH_LONG).show()
+                if (!persisted) {
+                    // Best effort only. The activity result still carries a live grant now, and the
+                    // chosen URI must remain visible so setup can continue. A later readiness check can
+                    // surface a genuinely revoked/unwritable folder instead of trapping onboarding.
+                    app.callectr.recorder.utils.AppLogger.w(
+                        "CV:Wizard",
+                        "Folder selected but persistable grant was not confirmed: $uri"
+                    )
                 }
             }
         }
@@ -147,21 +154,31 @@ fun WizardScreen(
     val driveFolderPicker = rememberLauncherForActivityResult(PersistentFolderPickerContract()) { selection ->
         if (selection != null) {
             val uri = selection.uri
+            viewModel.setDriveFolderUri(uri)
             val persisted = context.takePersistableFolderPermission(selection)
-            if (persisted || SafHelper.isFolderValid(context, uri)) {
-                viewModel.setDriveFolderUri(uri)
-            } else {
-                Toast.makeText(context, context.getString(R.string.recording_error_folder_missing), Toast.LENGTH_LONG).show()
+            if (!persisted) {
+                app.callectr.recorder.utils.AppLogger.w(
+                    "CV:Wizard",
+                    "Drive folder selected but persistable grant was not confirmed: $uri"
+                )
             }
         }
     }
 
     // Current values (re-read whenever a write bumps updateTrigger).
     val storageTarget = remember(updateTrigger) { viewModel.preferences.getStorageTarget() }
-    val recordingFolderLabel =
-        remember(updateTrigger) { SafHelper.getFolderDisplayNameOrNull(context, viewModel.preferences.getRecordingFolderUri()) }
-    val driveFolderLabel =
-        remember(updateTrigger) { SafHelper.getFolderDisplayNameOrNull(context, viewModel.preferences.getDriveFolderUri()) }
+    val recordingFolderUri = remember(updateTrigger) { viewModel.preferences.getRecordingFolderUri() }
+    val driveFolderUri = remember(updateTrigger) { viewModel.preferences.getDriveFolderUri() }
+    val recordingFolderLabel = remember(updateTrigger) {
+        SafHelper.getFolderDisplayNameOrNull(context, recordingFolderUri)
+            ?: recordingFolderUri?.lastPathSegment?.substringAfterLast(':')?.substringAfterLast('/')
+            ?: context.getString(R.string.wizard_ui_folder_selected)
+    }
+    val driveFolderLabel = remember(updateTrigger) {
+        SafHelper.getFolderDisplayNameOrNull(context, driveFolderUri)
+            ?: driveFolderUri?.lastPathSegment?.substringAfterLast(':')?.substringAfterLast('/')
+            ?: context.getString(R.string.wizard_ui_folder_selected)
+    }
     val scheduleMode = remember(updateTrigger) { viewModel.preferences.getSyncScheduleMode() }
     val syncHour = remember(updateTrigger) { viewModel.preferences.getSyncTimeHour() }
     val syncMinute = remember(updateTrigger) { viewModel.preferences.getSyncTimeMinute() }
@@ -188,8 +205,8 @@ fun WizardScreen(
     // Whether the current step's requirements are satisfied (gates the Next/Finish button).
     val canAdvance = canAdvanceFrom(
         step = currentStep,
-        hasRecordingFolder = recordingFolderLabel != null,
-        hasDriveFolder = !usesDrive || driveFolderLabel != null
+        hasRecordingFolder = recordingFolderUri != null,
+        hasDriveFolder = !usesDrive || driveFolderUri != null
     )
 
     val isLastStep = safeIndex == steps.lastIndex
