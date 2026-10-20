@@ -35,6 +35,7 @@ import app.callectr.recorder.transcription.TranscriptionScheduler
 import app.callectr.recorder.data.recordings.RecordingDirection
 import app.callectr.recorder.data.transcripts.SpeakerTurnsRepository
 import app.callectr.recorder.data.recordings.RecordingMetadata
+import app.callectr.recorder.services.call.AnswerWait
 import app.callectr.recorder.system.storage.SafHelper
 import app.callectr.recorder.system.storage.MediaStoreHelper
 import app.callectr.recorder.system.storage.StorageRouter
@@ -321,15 +322,22 @@ class RecordingForegroundService : Service() {
                 stopRequested = false
                 currentState = RecordingServiceState.Starting(currentMeta)
 
-                // IO dispatcher: AdbShell.ensureConnected + ScrcpyLauncher do real network I/O over the
-                // ADB TLS socket (and block on a socket-readiness retry loop). Running on the main thread
-                // throws NetworkOnMainThreadException and would ANR.
+                // In the simple Callectr baseline the live REC button may be pressed while an outgoing
+                // call is still ringing. Arm immediately, but begin the audio file only when the far end
+                // answers. Incoming calls reach this service only after OFFHOOK, so they start at once.
+                val waitForAnswer =
+                    action == ACTION_MANUAL_START &&
+                        currentMeta.direction == RecordingDirection.OUTGOING &&
+                        appPreferences.isRecordFromAnswerEnabled()
+
+                // IO dispatcher: daemon/ADB work and the precise-call-state poll both block.
                 serviceScope.launch(Dispatchers.IO) {
                     try {
+                        if (waitForAnswer) waitUntilOutgoingAnswered()
+                        if (stopRequested) throw CancellationException("Call ended before recording began")
                         // Recording always goes through the persistent daemon (commanded over binder, no ADB
                         // at record time — so we must NOT ensureConnected here, which would re-enable WD).
-                        // AudioRecordingEngine ensures the daemon (transiently enabling WD only to relaunch it)
-                        // and itself falls back to a direct ADB connection if the daemon is truly unavailable.
+                        // AudioRecordingEngine ensures the daemon and itself falls back to direct ADB if needed.
                         startNewRecordingSession(currentMeta)
                     } catch (e: Exception) {
                         // Don't catch coroutine cancellations, they are used for cleanup. This creates a false error notification when everything's fine.
@@ -514,6 +522,31 @@ class RecordingForegroundService : Service() {
             currentState = RecordingServiceState.Standby(metadata)
             stopRecordingSessionAndService()
         }
+    }
+
+    /**
+     * Waits for a manually armed outgoing call to become ACTIVE before opening the recorder.
+     *
+     * The shell-uid recorder host can read the precise foreground call state even though the app
+     * itself cannot hold READ_PRECISE_PHONE_STATE. If the host cannot provide a state, AnswerWait's
+     * conservative fallback starts rather than losing the call.
+     */
+    private suspend fun waitUntilOutgoingAnswered() {
+        val startedAt = System.currentTimeMillis()
+        var polls = 0
+        while (!stopRequested) {
+            val host = RecorderConnection.service
+            val dump = runCatching { host?.diagnosticDump("call_state", null) }.getOrNull()
+            val state = AnswerWait.parseState(dump)
+            val elapsed = System.currentTimeMillis() - startedAt
+            polls++
+            if (AnswerWait.decide(state, elapsed, hostConnected = host != null) == AnswerWait.Decision.START) {
+                AppLogger.i(TAG, "Manual outgoing recording armed: starting after $polls poll(s), state=$state elapsed=${elapsed}ms")
+                return
+            }
+            delay(AnswerWait.POLL_MS)
+        }
+        throw CancellationException("Outgoing call ended before it was answered")
     }
 
     /**
