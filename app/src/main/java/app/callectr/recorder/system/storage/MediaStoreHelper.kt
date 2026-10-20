@@ -4,6 +4,7 @@
  */
 package app.callectr.recorder.system.storage
 
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
@@ -43,6 +44,13 @@ object MediaStoreHelper {
         val displayName: String?,
         val sizeBytes: Long?,
         val lastModifiedMillis: Long?,
+    )
+
+    data class StoredAudio(
+        val uri: Uri,
+        val displayName: String,
+        val sizeBytes: Long,
+        val lastModifiedMillis: Long,
     )
 
     fun createAudioFile(
@@ -134,6 +142,55 @@ object MediaStoreHelper {
         }
         return UriInfo(name, size, modified)
     }
+
+    /**
+     * Enumerates Callectr's automatic local folder. This is used to rebuild the in-app catalog after
+     * an app-data reset/reinstall without asking the user to pick a folder again.
+     */
+    fun listLocalRecordings(context: Context): List<StoredAudio> {
+        val collection = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val path = relativePathForSdk(Build.VERSION.SDK_INT)
+        val projection = arrayOf(
+            MediaStore.Audio.Media._ID,
+            MediaStore.Audio.Media.DISPLAY_NAME,
+            MediaStore.Audio.Media.SIZE,
+            MediaStore.Audio.Media.DATE_MODIFIED,
+        )
+        val selection = "${MediaStore.Audio.Media.RELATIVE_PATH} = ? OR ${MediaStore.Audio.Media.RELATIVE_PATH} = ?"
+        val args = arrayOf(path, "$path/")
+        val items = mutableListOf<StoredAudio>()
+        runCatching {
+            context.contentResolver.query(
+                collection,
+                projection,
+                selection,
+                args,
+                "${MediaStore.Audio.Media.DATE_MODIFIED} DESC",
+            )?.use { cursor ->
+                val idCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+                val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
+                val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE)
+                val modifiedCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_MODIFIED)
+                while (cursor.moveToNext()) {
+                    val name = cursor.getString(nameCol) ?: continue
+                    val size = if (cursor.isNull(sizeCol)) 0L else cursor.getLong(sizeCol)
+                    if (size <= 0L) continue
+                    val uri = ContentUris.withAppendedId(collection, cursor.getLong(idCol))
+                    val modified = if (cursor.isNull(modifiedCol)) 0L else cursor.getLong(modifiedCol) * 1000L
+                    items += StoredAudio(uri, name, size, modified)
+                }
+            }
+        }.onFailure {
+            AppLogger.w(TAG, "Could not enumerate automatic local recordings: ${it.message}")
+        }
+        return items
+    }
+
+    /** Whether an app-owned MediaStore URI still resolves. */
+    fun exists(context: Context, uri: Uri): Boolean = runCatching {
+        context.contentResolver.query(uri, arrayOf(MediaStore.MediaColumns._ID), null, null, null)
+            ?.use { it.moveToFirst() } == true
+    }.getOrDefault(false)
 
     fun isMediaStoreUri(uri: Uri?): Boolean = uri?.authority == MediaStore.AUTHORITY
 }
