@@ -75,10 +75,14 @@ object VoipRecordPrompt {
         runCatching {
             context.getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification)
         }.onFailure { AppLogger.w(TAG, "Could not post the app-call prompt: ${it.message}") }
+        // If the user explicitly allowed "Display over other apps", mirror the same action as the
+        // small live REC pill over WhatsApp/Signal/etc. The notification is always kept as fallback.
+        LiveRecordOverlay.showVoip(context)
     }
 
     /** Removes the prompt — because recording started, or because the call ended unrecorded. */
     fun cancel(context: Context) {
+        LiveRecordOverlay.dismiss(LiveRecordOverlay.Owner.VOIP)
         runCatching {
             context.getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
         }.onFailure { AppLogger.w(TAG, "Could not cancel the app-call prompt: ${it.message}") }
