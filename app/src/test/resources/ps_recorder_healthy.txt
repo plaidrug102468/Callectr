@@ -1,0 +1,2 @@
+u0_a546       8483 app.callectr.recorder
+shell        13035 app_process / app.callectr.recorder.server.RecorderServer /data/app/~~B9mbgq8lBwZh2kCfxkeVRg==/app.callectr.recorder-Ju24PrFwLjJgG29lCaWGfA==/base.apk
