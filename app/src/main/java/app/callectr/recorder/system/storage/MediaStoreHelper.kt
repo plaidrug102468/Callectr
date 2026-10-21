@@ -32,7 +32,7 @@ object MediaStoreHelper {
      * folder. The user's current Android 16 device always resolves to Recordings/Callectr.
      */
     internal fun relativePathForSdk(sdkInt: Int): String =
-        if (sdkInt >= Build.VERSION_CODES.S) RELATIVE_PATH else "${Environment.DIRECTORY_MUSIC}/Callectr"
+        if (sdkInt >= 31) RELATIVE_PATH else "Music/Callectr"
 
     data class CreatedAudio(
         val uri: Uri,
