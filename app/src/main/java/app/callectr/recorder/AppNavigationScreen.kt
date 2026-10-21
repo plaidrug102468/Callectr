@@ -239,25 +239,8 @@ fun AppNavigationScreen(
             // closing is instant and nothing behind is rebuilt. SettingsSidebar owns back, the scrim
             // tap and the swipe; the gear only has to open it.
             AppScreen.Home -> {
-                val scope = rememberCoroutineScope()
-                val drawerState = rememberDrawerState(DrawerValue.Closed)
-
-                // Held here rather than defaulted inside HomeScreen so the resume observer below and
-                // the list are demonstrably the same instance. `viewModel()` resolves against the
-                // Activity's store, so this is the instance HomeScreen would have built anyway.
                 val homeViewModel: HomeViewModel = viewModel()
 
-                // Returning to the app re-runs HomeViewModel.refresh(), and this is the level it has
-                // to happen at. refresh() is not a list reload: it recomputes the status card, runs
-                // the setup-health sweep and silently re-grants WRITE_SECURE_SETTINGS when an
-                // install-over has dropped it — a grant whose absence has already cost a real
-                // 13-minute call. Owned by the recordings screen, all of that ran only while the
-                // recordings list was what you resumed onto; owned here, it runs whatever section is
-                // showing. HomeScreen no longer registers one, so there is still exactly one.
-                //
-                // Deliberately inside the Home branch and not beside the router's own observer
-                // above: during onboarding there is no recorder, no folder and nothing to heal, and
-                // building HomeViewModel there would start a full recordings pass behind the wizard.
                 DisposableEffect(lifecycleOwner) {
                     val observer = LifecycleEventObserver { _, event ->
                         if (event == Lifecycle.Event.ON_RESUME) homeViewModel.refresh()
@@ -266,43 +249,17 @@ fun AppNavigationScreen(
                     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
                 }
 
-                // Back from a section returns to the hub. From the hub, nothing is registered at all
-                // and the gesture leaves the app — swallowing it there would make CallVault the one
-                // app on the phone you cannot back out of.
-                //
-                // Registered here, above the panel and above Home, so it is the LAST resort:
-                // Compose hands back to the most recently composed enabled handler, and the drawer's
-                // (open), selection mode's and the open recording's are all composed below this one.
-                // Deliberately inside the Home branch — during onboarding there are no sections, and
-                // a handler registered out there would swallow back on the wizard.
-                BackHandler(enabled = section != HomeSection.Hub) { goToSection(HomeSection.Hub) }
-
-                SettingsSidebar(
-                    drawerState = drawerState,
-                    onClose = { scope.launch { drawerState.close() } },
-                    settings = {
-                        PersonalSettingsScreen(
-                            onBack = { scope.launch { drawerState.close() } }
-                        )
-                    },
-                ) {
-                    PersonalHomeScreen(
-                        onOpenSettings = { scope.launch { drawerState.open() } },
-                        openRecording = openRecording,
-                        onOpenRecordingHandled = onOpenRecordingHandled,
-                        viewModel = homeViewModel
-                    )
-                }
+                PersonalHomeScreen(
+                    onOpenSettings = { appNavViewModel.navigateTo(AppScreen.Settings) },
+                    openRecording = openRecording,
+                    onOpenRecordingHandled = onOpenRecordingHandled,
+                    viewModel = homeViewModel
+                )
             }
 
-            // Kept so an in-flight manual navigation (or a restored state that still names Settings)
-            // resolves to something rather than falling through the `when`. It is no longer reachable
-            // from the UI — nothing calls navigateTo(Settings) — and comes out once the panel has run
-            // on a device.
             AppScreen.Settings -> {
                 BackHandler { appNavViewModel.navigateBack() }
-                SettingsScreen(
-                    viewModel = settingsViewModel,
+                PersonalSettingsScreen(
                     onBack = { appNavViewModel.navigateBack() }
                 )
             }
