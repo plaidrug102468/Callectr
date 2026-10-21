@@ -1102,7 +1102,7 @@ class AppPreferences(context: Context) {
      * their own app, at the cost of the Recents thumbnail no longer being hidden. Meaningless when the
      * lock is off (the flag is never set then), so the UI only exposes it alongside the lock.
      */
-    fun isAllowScreenshots(): Boolean = getBoolean(Key.ALLOW_SCREENSHOTS, false)
+    fun isAllowScreenshots(): Boolean = getBoolean(Key.ALLOW_SCREENSHOTS, true)
 
     fun setAllowScreenshots(allow: Boolean) = setBoolean(Key.ALLOW_SCREENSHOTS, allow)
 
