@@ -196,6 +196,7 @@ class WizardViewModel(application: Application) : AndroidViewModel(application) 
         preferences.setRecordFromAnswerEnabled(true)
         preferences.setVoipRecordingEnabled(true)
         preferences.setVoipAutoStartEnabled(false)
+        preferences.setAllowScreenshots(true)
 
         preferences.chooseAudioCodec(ScrcpyAudioCodec.AAC.cliKey)
         preferences.setHandoffPersistEnabled(false)
