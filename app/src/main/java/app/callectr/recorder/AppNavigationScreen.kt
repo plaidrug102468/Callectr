@@ -143,45 +143,11 @@ fun AppNavigationScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // ---- Which section of Home is showing.
-    //
-    // Read once per visit rather than on every recomposition: this is a SharedPreferences read, and
-    // the answer cannot change underneath us — only [goToSection] writes it, and it updates the state
-    // below in the same breath.
-    val storedSectionKey = remember { preferences.getLastHomeSectionKey() }
-
-    // Null until the user (or a notification) has actually navigated. Until then the section is
-    // derived from what was stored, every composition, which is what makes "reopen where you were"
-    // land without a frame of the hub first: an effect that resolved it after the first composition
-    // would show the hub and then swap.
-    var chosenSection by rememberSaveable { mutableStateOf<HomeSection?>(null) }
-    val section = chosenSection ?: HomeSection.opening(resolvedScreen, storedSectionKey) ?: HomeSection.Hub
-
-    // Every navigation between sections goes through here, so persisting it cannot be forgotten in
-    // one of the places that navigates.
-    val goToSection: (HomeSection) -> Unit = { next ->
-        chosenSection = next
-        preferences.setLastHomeSection(next)
-    }
-
-    // A notification tap says what it was about, and now it decides where it lands: all four go to
-    // the hub, because the status card, the update offer and the banners are all there. Without
-    // this, "recording is broken" could open onto a transcript list with no sign of the problem —
-    // silently, since nothing crashes.
-    //
-    // Acknowledged whatever the router decided, including when it decided onboarding: a notification
-    // cannot jump ahead of the disclaimer or the wizard, and a request that outlives the visit it
-    // arrived in would re-navigate later, out of nowhere. Logged because "which notification did you
-    // tap?" is a question a debug report otherwise cannot answer.
+    // Personal Callectr has one home surface instead of the old Hub/Recordings/Transcripts/
+    // Summaries sections. Notification taps simply return to that home surface.
     LaunchedEffect(notificationDestination, screenState) {
         if (notificationDestination == NotificationDestination.None) return@LaunchedEffect
-        val target = HomeSection.forNotification(resolvedScreen, notificationDestination)
-        if (target != null) goToSection(target)
-        AppLogger.d(
-            "CV:Nav",
-            "Opened from the ${notificationDestination.key} notification; showing $screenState" +
-                (target?.let { ", section ${it.key}" } ?: "")
-        )
+        AppLogger.d("CV:Nav", "Opened from the \${notificationDestination.key} notification; showing personal home")
         onNotificationDestinationHandled()
     }
 
