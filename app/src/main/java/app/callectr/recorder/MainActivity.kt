@@ -102,6 +102,10 @@ class MainActivity : AppCompatActivity() {
         notificationDestination = destinationOf(intent)
         openRecording = recordingOf(intent)
         openTranscript = transcriptOf(intent)
+
+        // One-time beta migration: clear the broken legacy folder-picker destination and retire
+        // upstream-only features before any screen or recorder service reads preferences.
+        AppPreferences(applicationContext).applyPersonalUiMigrationOnce()
         // Carry an unlock across an Activity recreation — see [onSaveInstanceState] for why this is
         // only ever set for a configuration change. Read before setContent so the first composition
         // draws the app rather than the lock screen and then swaps.
