@@ -37,6 +37,8 @@ import app.callectr.recorder.ui.navigation.NotificationDestination
 import app.callectr.recorder.utils.AppLogger
 import app.callectr.recorder.ui.screens.DisclaimerScreen
 import app.callectr.recorder.ui.screens.HomeScreen
+import app.callectr.recorder.ui.screens.PersonalHomeScreen
+import app.callectr.recorder.ui.screens.PersonalSettingsScreen
 import app.callectr.recorder.ui.screens.PermissionsScreen
 import app.callectr.recorder.ui.screens.SettingsScreen
 import app.callectr.recorder.ui.screens.WizardScreen
@@ -197,8 +199,8 @@ fun AppNavigationScreen(
     // unacknowledged would fire whenever onboarding finally resolved to Home, which could be days
     // and several screens later. Home acknowledges it itself once it has somewhere to put it.
     LaunchedEffect(openTranscript, screenState) {
-        if (openTranscript == null || screenState == AppScreen.Home) return@LaunchedEffect
-        AppLogger.d("CV:Nav", "Asked to open a transcript during $screenState; dropping the request")
+        if (openTranscript == null) return@LaunchedEffect
+        AppLogger.d("CV:Nav", "Ignoring legacy transcript request in personal Callectr")
         onOpenTranscriptHandled()
     }
 
@@ -279,20 +281,15 @@ fun AppNavigationScreen(
                     drawerState = drawerState,
                     onClose = { scope.launch { drawerState.close() } },
                     settings = {
-                        SettingsScreen(
-                            viewModel = settingsViewModel,
+                        PersonalSettingsScreen(
                             onBack = { scope.launch { drawerState.close() } }
                         )
                     },
                 ) {
-                    HomeScreen(
-                        section = section,
-                        onSelectSection = goToSection,
+                    PersonalHomeScreen(
                         onOpenSettings = { scope.launch { drawerState.open() } },
                         openRecording = openRecording,
                         onOpenRecordingHandled = onOpenRecordingHandled,
-                        openTranscript = openTranscript,
-                        onOpenTranscriptHandled = onOpenTranscriptHandled,
                         viewModel = homeViewModel
                     )
                 }
