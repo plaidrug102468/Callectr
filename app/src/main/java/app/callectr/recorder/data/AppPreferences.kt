@@ -341,6 +341,7 @@ class AppPreferences(context: Context) {
         SPEAKER_MAP_CONFIRMED("speaker_map_confirmed"),
         APP_LOCK_ENABLED("app_lock_enabled"),
         ALLOW_SCREENSHOTS("allow_screenshots"),
+        PERSONAL_UI_MIGRATED("personal_ui_migrated"),
 
         // --- Retention ---
         RETENTION_LINKED("retention_linked"),
@@ -1105,6 +1106,36 @@ class AppPreferences(context: Context) {
     fun isAllowScreenshots(): Boolean = getBoolean(Key.ALLOW_SCREENSHOTS, true)
 
     fun setAllowScreenshots(allow: Boolean) = setBoolean(Key.ALLOW_SCREENSHOTS, allow)
+
+    /**
+     * One-time migration from the broad upstream-style beta UI to personal Callectr.
+     *
+     * Most importantly this clears any stale SAF folder URI left by beta1-4. A persisted custom
+     * folder would silently keep the recorder on the broken picker path even after the UI stopped
+     * showing a picker. Null is the intentional automatic MediaStore destination.
+     */
+    fun applyPersonalUiMigrationOnce() {
+        if (getBoolean(Key.PERSONAL_UI_MIGRATED, false)) return
+
+        setStorageTarget(StorageTarget.LOCAL)
+        setRecordingFolderUri(null)
+        setDriveFolderUri(null)
+
+        setCarrierRecordingEnabled(true)
+        setAutoRecordIncomingEnabled(false)
+        setAutoRecordOutgoingEnabled(false)
+        setRecordFromAnswerEnabled(true)
+        setVoipRecordingEnabled(true)
+        setVoipAutoStartEnabled(false)
+
+        setAllowScreenshots(true)
+        setUpdateCheckEnabled(false)
+        setTranscriptionMode(TranscriptionMode.MANUAL)
+        setWriteTranscriptSidecarEnabled(false)
+        setHandoffPersistEnabled(false)
+
+        setBoolean(Key.PERSONAL_UI_MIGRATED, true)
+    }
 
     // -------- Sync Schedule --------
 
