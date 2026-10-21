@@ -323,18 +323,16 @@ class RecordingForegroundService : Service() {
                 stopRequested = false
                 currentState = RecordingServiceState.Starting(currentMeta)
 
-                // In the simple Callectr baseline the live REC button may be pressed while an outgoing
-                // call is still ringing. Arm immediately, but begin the audio file only when the far end
-                // answers. Incoming calls reach this service only after OFFHOOK, so they start at once.
+                // The live REC button may be pressed before either side has answered: outgoing while
+                // dialling or incoming while the phone is still ringing. In the simple baseline REC
+                // means "record this conversation", not "record ringback", so wait for ACTIVE first.
                 val waitForAnswer =
-                    action == ACTION_MANUAL_START &&
-                        currentMeta.direction == RecordingDirection.OUTGOING &&
-                        appPreferences.isRecordFromAnswerEnabled()
+                    action == ACTION_MANUAL_START && appPreferences.isRecordFromAnswerEnabled()
 
                 // IO dispatcher: daemon/ADB work and the precise-call-state poll both block.
                 serviceScope.launch(Dispatchers.IO) {
                     try {
-                        if (waitForAnswer) waitUntilOutgoingAnswered()
+                        if (waitForAnswer) waitUntilCallAnswered()
                         if (stopRequested) throw CancellationException("Call ended before recording began")
                         // Recording always goes through the persistent daemon (commanded over binder, no ADB
                         // at record time — so we must NOT ensureConnected here, which would re-enable WD).
@@ -532,7 +530,7 @@ class RecordingForegroundService : Service() {
      * itself cannot hold READ_PRECISE_PHONE_STATE. If the host cannot provide a state, AnswerWait's
      * conservative fallback starts rather than losing the call.
      */
-    private suspend fun waitUntilOutgoingAnswered() {
+    private suspend fun waitUntilCallAnswered() {
         val startedAt = System.currentTimeMillis()
         var polls = 0
         while (!stopRequested) {
@@ -542,12 +540,12 @@ class RecordingForegroundService : Service() {
             val elapsed = System.currentTimeMillis() - startedAt
             polls++
             if (AnswerWait.decide(state, elapsed, hostConnected = host != null) == AnswerWait.Decision.START) {
-                AppLogger.i(TAG, "Manual outgoing recording armed: starting after $polls poll(s), state=$state elapsed=${elapsed}ms")
+                AppLogger.i(TAG, "Manual recording armed: starting after $polls poll(s), state=$state elapsed=${elapsed}ms")
                 return
             }
             delay(AnswerWait.POLL_MS)
         }
-        throw CancellationException("Outgoing call ended before it was answered")
+        throw CancellationException("Call ended before it was answered")
     }
 
     /**
