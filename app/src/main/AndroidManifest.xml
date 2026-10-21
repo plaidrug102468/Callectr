@@ -156,20 +156,16 @@
             finished, and leaving it in the recents list would also leave a thumbnail of somebody's
             file name there.
         -->
+        <!-- Personal Callectr does not register as a Telegram/WhatsApp/audio share target. The
+             legacy activity stays compiled for source compatibility but is disabled and unreachable. -->
         <activity
             android:name=".ShareImportActivity"
-            android:exported="true"
+            android:enabled="false"
+            android:exported="false"
             android:label="@string/share_import_label"
             android:taskAffinity=""
             android:excludeFromRecents="true"
-            android:theme="@style/Theme.CallVault.Share">
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="audio/*" />
-                <data android:mimeType="application/ogg" />
-            </intent-filter>
-        </activity>
+            android:theme="@style/Theme.CallVault.Share" />
 
         <!-- Foreground service that drives ADB wireless pairing via a notification -->
         <service
