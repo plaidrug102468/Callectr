@@ -281,7 +281,25 @@ class CallSessionManager private constructor(context: Context) {
             }
         }
 
-        // 4. Handle OFFHOOK (now in a call) + The Verification Window (Non-blocking delay)
+        // 4. Manual incoming calls should surface the live REC control while the phone is still
+        // ringing, not only after the user answers. We only do this for OFFER/manual mode: automatic
+        // recording still waits for OFFHOOK so an unanswered call never creates audio.
+        if (state == TelephonyManager.CALL_STATE_RINGING) {
+            if (rawNumber.isNullOrBlank()) {
+                // Same double-broadcast verification window as OFFHOOK. A second RINGING broadcast with
+                // the real number cancels this job and replaces it before the prompt is shown.
+                delay(500)
+            }
+            val currentMetadata = session.currentMetadata ?: return
+            val enrichedMetadata = RecordingMetadata.enrichMetadata(appContext, currentMetadata)
+            withContext(Dispatchers.Main) {
+                session.currentMetadata = enrichedMetadata
+                offerIncomingWhileRinging()
+            }
+            return
+        }
+
+        // 5. Handle OFFHOOK (now in a call) + The Verification Window (Non-blocking delay)
         if (state == TelephonyManager.CALL_STATE_OFFHOOK) {
             // Handle anonymous and blank numbers (due to double broadcast behavior with one having no number)
             if (rawNumber.isNullOrBlank()) {
@@ -302,6 +320,25 @@ class CallSessionManager private constructor(context: Context) {
                 evaluateAndStartService()
             }
         }
+    }
+
+    /**
+     * In manual mode, show the same live Record notification/overlay while an incoming call is
+     * ringing. Pressing REC at this stage arms the recorder; RecordingForegroundService waits for the
+     * call to become ACTIVE before opening the audio file. If the call is declined/missed, IDLE stops
+     * the standby service and nothing is saved.
+     */
+    private fun offerIncomingWhileRinging() {
+        if (session.wasRecordingServiceStartIntentSend) return
+        val metadata = session.currentMetadata ?: return
+        if (metadata.direction != RecordingDirection.INCOMING) return
+        if (!preferences.getRecordingState().isRecordingAllowed) return
+        if (!preferences.isCarrierRecordingEnabled()) return
+        if (preferences.isAutoRecordIncomingEnabled()) return
+
+        AppLogger.i(TAG, "Incoming call is ringing in manual mode — showing live Record control.")
+        sendServiceCommand(RecordingForegroundService.ACTION_STANDBY, metadata)
+        session.wasRecordingServiceStartIntentSend = true
     }
 
     /**
