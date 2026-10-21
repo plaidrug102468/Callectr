@@ -90,74 +90,72 @@ class RecordingNotificationHelper(private val context: Context) {
     }
 
     fun getNotification(state: RecordingServiceState): Notification {
+        val mode = when (state) {
+            is RecordingServiceState.Starting -> LiveRecordControlsPolicy.Mode.STARTING
+            is RecordingServiceState.Active ->
+                if (state.isPaused) LiveRecordControlsPolicy.Mode.PAUSED else LiveRecordControlsPolicy.Mode.ACTIVE
+            else -> LiveRecordControlsPolicy.Mode.STANDBY
+        }
+
         val titleRes: Int
         val contentRes: Int
-        // A list, not one slot. The notification is the only control surface during a call — the
-        // screen is against the user's ear — and it offered exactly one button while the service had
-        // supported ACTION_STOP_RECORDING all along, unreachable.
-        val actions = mutableListOf<NotificationAction>()
-        // Show the cross-country tip only when the call is actually detected as cross-country.
-        // (Previously it also showed when metadata was merely unknown/not-yet-enriched, which made
-        // local calls briefly appear "cross-country" early in the call.)
-        val subRes: Int = if (state.metadata?.isCrossCountry == true) R.string.recording_notification_cross_country_tip else R.string.recording_notification_current_country_tip
-
-        when (state) {
-            is RecordingServiceState.Starting -> {
+        when (mode) {
+            LiveRecordControlsPolicy.Mode.STARTING -> {
                 titleRes = R.string.recording_standby_notification_title
                 contentRes = R.string.recording_notification_waiting
             }
-            is RecordingServiceState.Active -> {
-                if (state.isPaused) {
-                    titleRes = R.string.recording_standby_notification_title
-                    contentRes = R.string.recording_notification_press_to_resume
-                    actions += NotificationAction(
+            LiveRecordControlsPolicy.Mode.ACTIVE -> {
+                titleRes = R.string.recording_notification_title
+                contentRes = R.string.recording_notification_press_to_pause
+            }
+            LiveRecordControlsPolicy.Mode.PAUSED -> {
+                titleRes = R.string.recording_standby_notification_title
+                contentRes = R.string.recording_notification_press_to_resume
+            }
+            LiveRecordControlsPolicy.Mode.STANDBY -> {
+                titleRes = R.string.recording_standby_notification_title
+                contentRes = R.string.recording_notification_press_to_start
+            }
+        }
+
+        val actions = LiveRecordControlsPolicy.controls(mode).map { control ->
+            when (control) {
+                LiveRecordControlsPolicy.Control.RECORD -> NotificationAction(
+                    R.drawable.ic_mic,
+                    context.getString(R.string.general_record),
+                    RecordingForegroundService.ACTION_MANUAL_START
+                )
+                LiveRecordControlsPolicy.Control.PAUSE -> NotificationAction(
+                    R.drawable.ic_mic,
+                    context.getString(R.string.general_pause),
+                    RecordingForegroundService.ACTION_PAUSE_RECORDING
+                )
+                LiveRecordControlsPolicy.Control.RESUME -> NotificationAction(
+                    R.drawable.ic_mic,
+                    context.getString(R.string.general_resume),
+                    RecordingForegroundService.ACTION_RESUME_RECORDING
+                )
+                LiveRecordControlsPolicy.Control.FLAG -> {
+                    val marks = PendingFlags.count()
+                    NotificationAction(
                         R.drawable.ic_mic,
-                        context.getString(R.string.general_resume),
-                        RecordingForegroundService.ACTION_RESUME_RECORDING
-                    )
-                } else {
-                    titleRes = R.string.recording_notification_title
-                    contentRes = R.string.recording_notification_press_to_pause
-                    actions += NotificationAction(
-                        R.drawable.ic_mic,
-                        context.getString(R.string.general_pause),
-                        RecordingForegroundService.ACTION_PAUSE_RECORDING
+                        if (marks > 0) context.getString(R.string.general_flag_count, marks)
+                        else context.getString(R.string.general_flag),
+                        RecordingForegroundService.ACTION_FLAG_MOMENT
                     )
                 }
-                // Marking a moment sits between Pause and Stop. It is the action most likely to be
-                // pressed mid-sentence, without looking, while the phone is against an ear.
-                // The count lives on the BUTTON, not in a toast. The action is pressed with the
-                // notification shade open, and a toast renders behind the shade — so the only
-                // confirmation the user could get was one they could not see. Here the label itself
-                // ticks up, right under the thumb that just pressed it.
-                val marks = PendingFlags.count()
-                actions += NotificationAction(
-                    R.drawable.ic_mic,
-                    if (marks > 0) context.getString(R.string.general_flag_count, marks)
-                    else context.getString(R.string.general_flag),
-                    RecordingForegroundService.ACTION_FLAG_MOMENT
-                )
-                // Always last. Ending the recording is the one action here that cannot be undone,
-                // and it must never sit where Pause has always been — people would end calls with
-                // the muscle memory they built for pausing them.
-                actions += NotificationAction(
+                LiveRecordControlsPolicy.Control.STOP -> NotificationAction(
                     R.drawable.ic_stop,
                     context.getString(R.string.general_stop),
                     RecordingForegroundService.ACTION_STOP_RECORDING
                 )
             }
-            else -> {
-                titleRes = R.string.recording_standby_notification_title
-                contentRes = R.string.recording_notification_press_to_start
-                actions += NotificationAction(
-                    R.drawable.ic_mic,
-                    context.getString(R.string.general_record),
-                    RecordingForegroundService.ACTION_MANUAL_START
-                )
-            }
         }
 
-        // The delete intent is triggered when the user dismisses the notification (Thanks Android 14+).
+        val subRes: Int =
+            if (state.metadata?.isCrossCountry == true) R.string.recording_notification_cross_country_tip
+            else R.string.recording_notification_current_country_tip
+
         val deletePendingIntent = PendingIntent.getService(
             context, 99,
             Intent(context, RecordingForegroundService::class.java).apply {
@@ -172,20 +170,20 @@ class RecordingNotificationHelper(private val context: Context) {
             .setContentTitle(context.getString(titleRes))
             .setContentText(context.getString(contentRes))
             .setSubText(context.getString(subRes))
-            .setOngoing(true) // Almost useless starting Android 14+ :)
-            .setDeleteIntent(deletePendingIntent) // Android 14+ workaround :)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC) // Nothing sensible here, and we want to show it on lockscreen.
+            .setOngoing(true)
+            .setDeleteIntent(deletePendingIntent)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setAutoCancel(false)
             .setOnlyAlertOnce(true)
-            .setSilent(state is RecordingServiceState.Active || state is RecordingServiceState.Starting) // Don't do a screen-incursion if we are already recording.
+            .setSilent(
+                mode == LiveRecordControlsPolicy.Mode.ACTIVE ||
+                    mode == LiveRecordControlsPolicy.Mode.PAUSED ||
+                    mode == LiveRecordControlsPolicy.Mode.STARTING
+            )
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
 
         actions.forEach { notifAction ->
-            // A request code derived from the action itself, NOT a shared constant. With
-            // FLAG_UPDATE_CURRENT two actions on the same code are the same PendingIntent: the
-            // second registration rewrites the first, and both buttons then fire whichever intent
-            // won. Stop and Pause sharing a code would mean tapping Pause could end the recording.
             val actionPendingIntent = PendingIntent.getService(
                 context, notifAction.intentAction.hashCode(),
                 Intent(context, RecordingForegroundService::class.java).apply {
